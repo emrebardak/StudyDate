@@ -1,0 +1,18 @@
+# Expo project (legacy, not used)
+app/node_modules/
+app/.expo/
+
+# React Native
+StudyMatch/node_modules/
+StudyMatch/android/.gradle/
+StudyMatch/android/app/build/
+StudyMatch/android/build/
+StudyMatch/android/app/.cxx/
+StudyMatch/android/local.properties
+StudyMatch/ios/Pods/
+StudyMatch/ios/build/
+
+# Misc
+.DS_Store
+*.log
+*.orig
