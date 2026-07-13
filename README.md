@@ -29,7 +29,7 @@ Three hooks differentiate StudyMatch from a typical dating app:
 2. **Progressive Disclosure** — photos are hidden until both users opt to reveal them mid-chat. Matching is driven entirely by academic compatibility (university, department, current study goal, tags like `#MidtermPrep`).
 3. **Action-Oriented** — a match isn't the finish line. The app pushes both users toward scheduling an actual "Study Date" (location, time, subject) via a built-in planner.
 
-Full product spec: [studymatch_full_architecture.md](studymatch_full_architecture.md).
+Full product spec: [docs/studymatch_full_architecture.md](docs/studymatch_full_architecture.md).
 
 ## Screens
 
@@ -75,9 +75,11 @@ StudyDate/
 │   │   └── types/                # User/Match/Message/StudyDate interfaces + navigation param types
 │   ├── App.tsx
 │   └── package.json
-├── studymatch_full_architecture.md   # full PRD + technical architecture
-├── development.md                    # session-by-session dev log
-├── HOW_TO_RUN.md                      # emulator setup walkthrough
+├── docs/
+│   ├── studymatch_full_architecture.md   # full PRD + technical architecture
+│   ├── development.md                    # session-by-session dev log
+│   └── HOW_TO_RUN.md                      # emulator setup walkthrough
+├── CLAUDE.md                          # guidance for Claude Code
 └── README.md                          # this file
 ```
 
@@ -109,7 +111,7 @@ cd ios && bundle exec pod install && cd ..
 npm run ios
 ```
 
-See [`HOW_TO_RUN.md`](HOW_TO_RUN.md) for a detailed emulator walkthrough (Android Studio Device Manager, Metro workflow, troubleshooting).
+See [`docs/HOW_TO_RUN.md`](docs/HOW_TO_RUN.md) for a detailed emulator walkthrough (Android Studio Device Manager, Metro workflow, troubleshooting).
 
 > **Windows note:** deeply nested project paths can hit the 260-character `MAX_PATH` limit during the Android native (CMake/ninja) build for autolinked packages like `react-native-gesture-handler`. If you see `ninja: error: ... Filename longer than 260 characters`, either enable Windows long-path support (`HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled = 1`, requires a reboot) or clone the repo to a short path (e.g. `C:\dev\SD`).
 
@@ -141,4 +143,4 @@ All colors, spacing, radius, and typography live in a single source of truth: [`
 
 ---
 
-Full product/technical spec: [`studymatch_full_architecture.md`](studymatch_full_architecture.md) · Development log: [`development.md`](development.md)
+Full product/technical spec: [`docs/studymatch_full_architecture.md`](docs/studymatch_full_architecture.md) · Development log: [`docs/development.md`](docs/development.md)

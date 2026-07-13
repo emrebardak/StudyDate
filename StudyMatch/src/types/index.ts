@@ -121,6 +121,15 @@ export interface DiscoveryFilters {
   departments: string[];
 }
 
+export interface RegistrationData {
+  email: string;
+  fullName: string;
+  institution: string;
+  department: string;
+  traits: string[];
+  focusGoal: string;
+}
+
 // Navigation param types
 export type RootStackParamList = {
   MainTabs: undefined;
@@ -130,6 +139,10 @@ export type RootStackParamList = {
   EditProfile: undefined;
   Filter: { current?: DiscoveryFilters } | undefined;
   MatchFound: undefined;
+  RegisterVerification: undefined;
+  RegisterProfile: { data: Partial<RegistrationData> };
+  RegisterTraits: { data: Partial<RegistrationData> };
+  RegisterFinal: { data: Partial<RegistrationData> };
 };
 
 export type TabParamList = {

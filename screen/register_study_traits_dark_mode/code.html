@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>StudyMatch - Registration: Study Traits</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;600;700&amp;family=Hanken+Grotesk:wght@400;600&amp;family=JetBrains+Mono:wght@500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-container-highest": "#2a3643",
+                        "on-secondary-fixed-variant": "#554600",
+                        "on-primary-container": "#6d5200",
+                        "surface-variant": "#2a3643",
+                        "secondary-fixed": "#ffe171",
+                        "outline-variant": "#4f4632",
+                        "inverse-on-surface": "#26313f",
+                        "primary": "#ffe5b2",
+                        "on-tertiary-fixed-variant": "#1e4879",
+                        "on-background": "#d7e3f5",
+                        "inverse-surface": "#d7e3f5",
+                        "on-tertiary": "#00315f",
+                        "on-secondary-fixed": "#221b00",
+                        "surface": "#081421",
+                        "secondary-container": "#fad100",
+                        "surface-container-low": "#101c29",
+                        "on-tertiary-fixed": "#001c3a",
+                        "surface-bright": "#2e3a48",
+                        "primary-fixed": "#ffdf9a",
+                        "surface-container-lowest": "#040f1b",
+                        "primary-fixed-dim": "#f8be00",
+                        "on-error-container": "#ffdad6",
+                        "background": "#081421",
+                        "on-surface-variant": "#d3c5ab",
+                        "on-surface": "#d7e3f5",
+                        "tertiary-container": "#afceff",
+                        "secondary-fixed-dim": "#e9c400",
+                        "inverse-primary": "#785a00",
+                        "tertiary-fixed": "#d4e3ff",
+                        "on-secondary-container": "#6d5a00",
+                        "error-container": "#93000a",
+                        "on-error": "#690005",
+                        "on-primary-fixed": "#251a00",
+                        "secondary": "#fff0c4",
+                        "tertiary": "#dee9ff",
+                        "on-tertiary-container": "#30578a",
+                        "on-primary-fixed-variant": "#5a4300",
+                        "tertiary-fixed-dim": "#a5c8ff",
+                        "error": "#ffb4ab",
+                        "primary-container": "#ffc300",
+                        "surface-dim": "#081421",
+                        "on-secondary": "#3b2f00",
+                        "surface-container-high": "#1f2b38",
+                        "surface-container": "#15202d",
+                        "on-primary": "#3f2e00",
+                        "surface-tint": "#f8be00",
+                        "outline": "#9c8f78"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "gutter": "24px",
+                        "margin-desktop": "48px",
+                        "container-max": "1280px",
+                        "margin-mobile": "16px",
+                        "base": "8px"
+                    },
+                    "fontFamily": {
+                        "display-lg": ["\"Source Serif 4\""],
+                        "title-md": ["Hanken Grotesk"],
+                        "body-lg": ["Hanken Grotesk"],
+                        "label-sm": ["JetBrains Mono"],
+                        "headline-lg": ["\"Source Serif 4\""],
+                        "headline-lg-mobile": ["\"Source Serif 4\""],
+                        "body-md": ["Hanken Grotesk"]
+                    },
+                    "fontSize": {
+                        "display-lg": ["48px", { "lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "title-md": ["20px", { "lineHeight": "28px", "fontWeight": "600" }],
+                        "body-lg": ["18px", { "lineHeight": "28px", "fontWeight": "400" }],
+                        "label-sm": ["12px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "500" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "fontWeight": "600" }],
+                        "headline-lg-mobile": ["28px", { "lineHeight": "36px", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .trait-badge.selected {
+            border-color: theme('colors.secondary-container');
+            box-shadow: 0 0 15px theme('colors.secondary-container/50');
+            background-color: theme('colors.surface-container-high');
+        }
+        .trait-badge.selected .icon-container {
+            color: theme('colors.secondary-container');
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background text-on-background font-body-md min-h-screen flex flex-col selection:bg-secondary-container selection:text-on-secondary-container">
+<!-- Top Navigation Placeholder (Hidden for transactional flow per guidelines, but keeping structure if needed later, currently suppressed as per rules for registration) -->
+<main class="flex-grow flex items-center justify-center p-margin-mobile md:p-margin-desktop">
+<div class="w-full max-w-3xl bg-surface-container-low rounded-xl border border-[#003566] p-margin-mobile md:p-margin-desktop shadow-2xl relative overflow-hidden">
+<!-- Progress Indicator -->
+<div class="mb-8">
+<div class="flex justify-between items-center mb-2">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest">Step 3 of 4</span>
+<span class="font-label-sm text-label-sm text-secondary-container uppercase tracking-widest">Study Traits</span>
+</div>
+<div class="w-full bg-[#001d3d] h-1 rounded-full overflow-hidden">
+<div class="bg-secondary-container h-full w-3/4 rounded-full transition-all duration-500"></div>
+</div>
+</div>
+<!-- Header Content -->
+<div class="mb-12 text-center md:text-left">
+<h1 class="font-headline-lg-mobile text-headline-lg-mobile md:font-headline-lg md:text-headline-lg text-primary-container mb-4">What's your study style?</h1>
+<p class="font-body-lg text-body-lg text-on-surface-variant max-w-xl">
+                    Select the traits that best describe your academic habits. This helps us match you with peers who complement your workflow.
+                </p>
+</div>
+<!-- Bento Grid for Traits -->
+<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-12">
+<!-- Trait 1 -->
+<button class="trait-badge group flex flex-col items-center justify-center p-6 bg-[#001d3d] rounded-xl border border-[#003566] hover:border-[#004080] transition-all duration-300 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-secondary-container" type="button">
+<div class="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+<span class="icon-container material-symbols-outlined text-4xl mb-3 text-on-surface-variant transition-colors group-hover:text-white" style="font-variation-settings: 'FILL' 0;">dark_mode</span>
+<span class="font-label-sm text-label-sm text-white uppercase tracking-widest">Night Owl</span>
+</button>
+<!-- Trait 2 -->
+<button class="trait-badge group flex flex-col items-center justify-center p-6 bg-[#001d3d] rounded-xl border border-[#003566] hover:border-[#004080] transition-all duration-300 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-secondary-container" type="button">
+<div class="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+<span class="icon-container material-symbols-outlined text-4xl mb-3 text-on-surface-variant transition-colors group-hover:text-white" style="font-variation-settings: 'FILL' 0;">local_cafe</span>
+<span class="font-label-sm text-label-sm text-white uppercase tracking-widest">Coffee Fueled</span>
+</button>
+<!-- Trait 3 -->
+<button class="trait-badge group flex flex-col items-center justify-center p-6 bg-[#001d3d] rounded-xl border border-[#003566] hover:border-[#004080] transition-all duration-300 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-secondary-container" type="button">
+<div class="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+<span class="icon-container material-symbols-outlined text-4xl mb-3 text-on-surface-variant transition-colors group-hover:text-white" style="font-variation-settings: 'FILL' 0;">wb_sunny</span>
+<span class="font-label-sm text-label-sm text-white uppercase tracking-widest">Early Bird</span>
+</button>
+<!-- Trait 4 -->
+<button class="trait-badge group flex flex-col items-center justify-center p-6 bg-[#001d3d] rounded-xl border border-[#003566] hover:border-[#004080] transition-all duration-300 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-secondary-container" type="button">
+<div class="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+<span class="icon-container material-symbols-outlined text-4xl mb-3 text-on-surface-variant transition-colors group-hover:text-white" style="font-variation-settings: 'FILL' 0;">menu_book</span>
+<span class="font-label-sm text-label-sm text-white uppercase tracking-widest">Library Lover</span>
+</button>
+<!-- Trait 5 -->
+<button class="trait-badge group flex flex-col items-center justify-center p-6 bg-[#001d3d] rounded-xl border border-[#003566] hover:border-[#004080] transition-all duration-300 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-secondary-container" type="button">
+<div class="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+<span class="icon-container material-symbols-outlined text-4xl mb-3 text-on-surface-variant transition-colors group-hover:text-white" style="font-variation-settings: 'FILL' 0;">group</span>
+<span class="font-label-sm text-label-sm text-white uppercase tracking-widest">Group Study</span>
+</button>
+<!-- Trait 6 -->
+<button class="trait-badge group flex flex-col items-center justify-center p-6 bg-[#001d3d] rounded-xl border border-[#003566] hover:border-[#004080] transition-all duration-300 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-secondary-container" type="button">
+<div class="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+<span class="icon-container material-symbols-outlined text-4xl mb-3 text-on-surface-variant transition-colors group-hover:text-white" style="font-variation-settings: 'FILL' 0;">headphones</span>
+<span class="font-label-sm text-label-sm text-white uppercase tracking-widest">Solo Focus</span>
+</button>
+<!-- Trait 7 -->
+<button class="trait-badge group flex flex-col items-center justify-center p-6 bg-[#001d3d] rounded-xl border border-[#003566] hover:border-[#004080] transition-all duration-300 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-secondary-container" type="button">
+<div class="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+<span class="icon-container material-symbols-outlined text-4xl mb-3 text-on-surface-variant transition-colors group-hover:text-white" style="font-variation-settings: 'FILL' 0;">timer</span>
+<span class="font-label-sm text-label-sm text-white uppercase tracking-widest">Pomodoro</span>
+</button>
+<!-- Trait 8 -->
+<button class="trait-badge group flex flex-col items-center justify-center p-6 bg-[#001d3d] rounded-xl border border-[#003566] hover:border-[#004080] transition-all duration-300 relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-secondary-container" type="button">
+<div class="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+<span class="icon-container material-symbols-outlined text-4xl mb-3 text-on-surface-variant transition-colors group-hover:text-white" style="font-variation-settings: 'FILL' 0;">campaign</span>
+<span class="font-label-sm text-label-sm text-white uppercase tracking-widest">Vocal Learner</span>
+</button>
+</div>
+<!-- Action Buttons -->
+<div class="flex flex-col-reverse md:flex-row justify-between items-center gap-4 mt-8 pt-8 border-t border-[#003566]">
+<button class="w-full md:w-auto px-6 py-3 font-title-md text-title-md text-white bg-transparent border-[1.5px] border-[#003566] rounded hover:border-[#004080] hover:bg-white/5 transition-colors" type="button">
+                    Back
+                </button>
+<button class="w-full md:w-auto px-8 py-3 font-title-md text-title-md text-background bg-secondary-container rounded font-bold hover:bg-primary-fixed transition-colors" type="button">
+                    Continue to Matches
+                </button>
+</div>
+</div>
+</main>
+<script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const badges = document.querySelectorAll('.trait-badge');
+            
+            badges.forEach(badge => {
+                badge.addEventListener('click', () => {
+                    badge.classList.toggle('selected');
+                    const icon = badge.querySelector('.icon-container');
+                    
+                    // Toggle fill state on the material symbol when selected
+                    if (badge.classList.contains('selected')) {
+                        icon.style.fontVariationSettings = "'FILL' 1";
+                    } else {
+                        icon.style.fontVariationSettings = "'FILL' 0";
+                    }
+                });
+            });
+        });
+    </script>
+</body></html>

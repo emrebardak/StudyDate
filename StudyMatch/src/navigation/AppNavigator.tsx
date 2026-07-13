@@ -13,6 +13,10 @@ import MyProfileScreen from '../screens/MyProfileScreen';
 import StudentProfileScreen from '../screens/StudentProfileScreen';
 import EditProfileScreen from '../screens/EditProfileScreen';
 import FilterScreen from '../screens/FilterScreen';
+import RegisterVerificationScreen from '../screens/RegisterVerificationScreen';
+import RegisterProfileScreen from '../screens/RegisterProfileScreen';
+import RegisterTraitsScreen from '../screens/RegisterTraitsScreen';
+import RegisterFinalScreen from '../screens/RegisterFinalScreen';
 
 import { Colors, Typography, Spacing } from '../theme';
 import type { RootStackParamList, TabParamList } from '../types';
@@ -63,11 +67,16 @@ export default function AppNavigator() {
   return (
     <NavigationContainer>
       <Stack.Navigator
+        initialRouteName="RegisterVerification"
         screenOptions={{
           headerShown: false,
           animation: 'slide_from_right',
         }}
       >
+        <Stack.Screen name="RegisterVerification" component={RegisterVerificationScreen} />
+        <Stack.Screen name="RegisterProfile" component={RegisterProfileScreen} />
+        <Stack.Screen name="RegisterTraits" component={RegisterTraitsScreen} />
+        <Stack.Screen name="RegisterFinal" component={RegisterFinalScreen} />
         <Stack.Screen name="MainTabs" component={MainTabs} />
         <Stack.Screen name="StudentProfile" component={StudentProfileScreen} />
         <Stack.Screen name="EditProfile" component={EditProfileScreen} />
