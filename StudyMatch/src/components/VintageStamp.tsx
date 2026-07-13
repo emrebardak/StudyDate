@@ -2,27 +2,10 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import type { StampMeta } from '../types';
 
-// ── Category color palettes ────────────────────────────────────────────────────
-const CATEGORY_COLORS = {
-  audio: {
-    bg: '#EDE0C4',
-    border: '#B8935A',
-    text: '#6B4A1E',
-    ink: 'rgba(107,74,30,0.18)',
-  },
-  pacing: {
-    bg: '#E8D5D5',
-    border: '#9B4444',
-    text: '#662222',
-    ink: 'rgba(102,34,34,0.15)',
-  },
-  fuel: {
-    bg: '#D8E8D8',
-    border: '#4A7A4A',
-    text: '#2A5A2A',
-    ink: 'rgba(42,90,42,0.15)',
-  },
-};
+// ── Colors ────────────────────────────────────────────────────────────────────
+const SURFACE  = '#001d3d';              // Prussian Blue
+const PRIMARY  = '#ffc300';             // Gold
+const GOLD_50  = 'rgba(255,195,0,0.5)'; // Gold at 0.5 opacity for inner ring
 
 interface Props {
   stamp: StampMeta;
@@ -30,10 +13,9 @@ interface Props {
 }
 
 export default function VintageStamp({ stamp, size = 'md' }: Props) {
-  const palette = CATEGORY_COLORS[stamp.category];
-  const dim = size === 'sm' ? 72 : size === 'lg' ? 104 : 88;
-  const iconSize = size === 'sm' ? 22 : size === 'lg' ? 34 : 28;
-  const labelSize = size === 'sm' ? 7 : size === 'lg' ? 10 : 8;
+  const dim       = size === 'sm' ? 72 : size === 'lg' ? 104 : 88;
+  const iconSize  = size === 'sm' ? 22 : size === 'lg' ? 34 : 28;
+  const labelSize = size === 'sm' ? 7  : size === 'lg' ? 10  : 8;
 
   return (
     <View
@@ -42,77 +24,62 @@ export default function VintageStamp({ stamp, size = 'md' }: Props) {
         {
           width: dim,
           height: dim,
-          borderColor: palette.border,
-          backgroundColor: palette.bg,
           transform: [{ rotate: `${stamp.rotation}deg` }],
         },
       ]}
     >
-      {/* Outer ring */}
+      {/* Inner dashed ring – gold at 0.5 opacity */}
       <View
         style={[
-          styles.outerRing,
-          { borderColor: palette.border, width: dim - 6, height: dim - 6 },
-        ]}
-      />
-
-      {/* Ink wash overlay — gives the "faded stamp" feel */}
-      <View
-        style={[
-          styles.inkWash,
-          { backgroundColor: palette.ink },
+          styles.innerRing,
+          { width: dim - 10, height: dim - 10 },
         ]}
       />
 
       {/* Content */}
       <View style={styles.content}>
-        <Text style={[styles.icon, { fontSize: iconSize }]}>{stamp.icon}</Text>
+        <Text style={[styles.icon, { fontSize: iconSize }]}>
+          {stamp.icon}
+        </Text>
         <Text
-          style={[
-            styles.label,
-            { color: palette.text, fontSize: labelSize },
-          ]}
+          style={[styles.label, { fontSize: labelSize }]}
           numberOfLines={2}
         >
           {stamp.label.toUpperCase()}
         </Text>
       </View>
 
-      {/* Corner perforations (passport punch marks) */}
-      {['topLeft', 'topRight', 'bottomLeft', 'bottomRight'].map((corner) => (
-        <View
-          key={corner}
-          style={[
-            styles.perforation,
-            styles[corner as keyof typeof styles] as any,
-            { borderColor: palette.border },
-          ]}
-        />
-      ))}
+      {/* Corner perforations – gold-bordered circles */}
+      {(['topLeft', 'topRight', 'bottomLeft', 'bottomRight'] as const).map(
+        (corner) => (
+          <View
+            key={corner}
+            style={[styles.perforation, styles[corner]]}
+          />
+        ),
+      )}
     </View>
   );
 }
 
-// ── Styles ─────────────────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   stamp: {
     borderRadius: 6,
     borderWidth: 2,
+    borderColor: PRIMARY,
+    backgroundColor: SURFACE,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
     position: 'relative',
   },
-  outerRing: {
+  innerRing: {
     position: 'absolute',
     borderRadius: 4,
     borderWidth: 1,
     borderStyle: 'dashed',
-    opacity: 0.6,
-  },
-  inkWash: {
-    ...StyleSheet.absoluteFill,
-    borderRadius: 6,
+    borderColor: GOLD_50,
   },
   content: {
     alignItems: 'center',
@@ -125,15 +92,16 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   label: {
+    color: PRIMARY,
     fontWeight: '800',
     textAlign: 'center',
     letterSpacing: 0.8,
     lineHeight: 10,
   },
   // Corner perforations
-  topLeft: { top: 4, left: 4 },
-  topRight: { top: 4, right: 4 },
-  bottomLeft: { bottom: 4, left: 4 },
+  topLeft:     { top: 4,    left: 4 },
+  topRight:    { top: 4,    right: 4 },
+  bottomLeft:  { bottom: 4, left: 4 },
   bottomRight: { bottom: 4, right: 4 },
   perforation: {
     position: 'absolute',
@@ -141,6 +109,7 @@ const styles = StyleSheet.create({
     height: 5,
     borderRadius: 999,
     borderWidth: 1,
+    borderColor: PRIMARY,
     backgroundColor: 'transparent',
   },
 });

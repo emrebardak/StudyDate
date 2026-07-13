@@ -47,3 +47,32 @@ Bootstrapped the full React Native / Expo project and built every screen shown i
 - [ ] Implement Supabase Realtime subscription for chat messages and the screen-lock mechanism
 - [ ] Add `expo-image-picker` integration to Edit Profile photo slots
 - [ ] Build post-date survey modal and trust score update flow
+
+---
+
+## Session 2 — Drop Expo scaffold, fix duplicate bottom tab bar
+
+### What was done
+
+#### Removed the Expo-based scaffold
+- Deleted the `app/` directory entirely (Expo `blank-typescript` RN CLI project) — the project now standardizes on `StudyMatch/`, the pure React Native CLI app (no Expo), which already has native `ios/` and `android/` folders generated.
+- `git rm -r --cached app/` staged the removal; change is reversible via git history but not yet committed.
+- Reasoning: only one native app is needed going forward, and iOS App Store publishing requires a real Xcode project — `StudyMatch/ios` already provides that; the Expo scaffold was redundant.
+
+#### Fixed duplicate bottom tab bar bug
+- Root cause: `AppNavigator.tsx` already renders a real bottom tab bar via `createBottomTabNavigator`, but four screens also rendered their own hand-rolled, non-functional `TabBar`/`BottomTabBar` components left over from an earlier mockup stage — causing two bars to stack visually. The fake bars had no `onPress` navigation wiring.
+- Removed the local `TabBar`/`BottomTabBar` component definitions, their render calls, and their now-unused styles from:
+  - `src/screens/DashboardScreen.tsx`
+  - `src/screens/DiscoveryScreen.tsx`
+  - `src/screens/ChatScreen.tsx`
+  - `src/screens/MyProfileScreen.tsx`
+- `AppNavigator.tsx`'s `Tab.Navigator` is now the single source of the bottom tab bar across all tab screens.
+
+#### Validation
+- `npx tsc --noEmit` — **0 errors**
+
+### Next steps (suggested)
+- [ ] Confirm `StudyDatePlannerScreen.tsx` renders correctly both as a tab screen and as a modal stack screen (no leftover custom nav assumptions)
+- [ ] Review `FilterScreen.tsx`'s custom bottom action bar (Apply/Reset) — screen-specific, not a nav duplicate, but worth a design pass since it sits in the root Stack
+- [ ] Set up EAS Build (or Mac + Xcode) for iOS distribution, since local iOS builds require macOS
+- [ ] Continue Supabase integration work per Session 1 next steps

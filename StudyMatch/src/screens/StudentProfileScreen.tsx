@@ -8,11 +8,11 @@ import {
   Dimensions,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { Colors, Spacing, Radius, Shadow, Typography } from '../theme';
+import { Colors, Spacing, Radius, Typography, Shadow } from '../theme';
 
 const { width } = Dimensions.get('window');
 
-// ── Mock Data ─────────────────────────────────────────────────────────────────
+// ── Mock Data ──────────────────────────────────────────────────────────────────
 const MOCK_PROFILE = {
   name: 'Eleanor Vance',
   age: 21,
@@ -21,7 +21,11 @@ const MOCK_PROFILE = {
   trustScore: 4.8,
   sessionCount: 12,
   bio: '"Looking for someone to silently suffer through Data Structures with. I bring excellent coffee and quiet desperation. Usually at the main library 3rd floor."',
-  availability: ['Tue Eves', 'Thu Eves', 'Weekends'],
+  availability: [
+    { label: 'Tue Eves', active: true },
+    { label: 'Thu Eves', active: true },
+    { label: 'Weekends', active: false },
+  ],
   badges: [
     { icon: '⏱️', label: 'Punctual' },
     { icon: '🤫', label: 'Silent & Focused' },
@@ -30,14 +34,14 @@ const MOCK_PROFILE = {
   ],
 };
 
-// ── Sub-components ─────────────────────────────────────────────────────────────
+// ── Star Rating ────────────────────────────────────────────────────────────────
 function StarRating({ score }: { score: number }) {
   const full = Math.floor(score);
   const half = score - full >= 0.5;
   return (
     <View style={styles.starsRow}>
       {Array.from({ length: 5 }).map((_, i) => {
-        let icon: 'star' | 'star-half' | 'star-outline' = 'star-outline';
+        let icon = 'star-outline';
         if (i < full) icon = 'star';
         else if (i === full && half) icon = 'star-half';
         return (
@@ -48,28 +52,19 @@ function StarRating({ score }: { score: number }) {
   );
 }
 
-function AvailabilityChip({
-  label,
-  active,
-}: {
-  label: string;
-  active: boolean;
-}) {
+// ── Availability Chip ──────────────────────────────────────────────────────────
+function AvailabilityChip({ label, active }: { label: string; active: boolean }) {
   return (
-    <View
-      style={[
-        styles.availChip,
-        active && styles.availChipActive,
-      ]}
-    >
-      {active && <View style={styles.availDot} />}
-      <Text style={[styles.availText, active && styles.availTextActive]}>
+    <View style={[styles.chip, active && styles.chipActive]}>
+      {active && <View style={styles.chipDot} />}
+      <Text style={[styles.chipText, active && styles.chipTextActive]}>
         {label}
       </Text>
     </View>
   );
 }
 
+// ── Badge Chip (2×2 grid) ──────────────────────────────────────────────────────
 function BadgeChip({ icon, label }: { icon: string; label: string }) {
   return (
     <View style={styles.badgeChip}>
@@ -80,23 +75,29 @@ function BadgeChip({ icon, label }: { icon: string; label: string }) {
 }
 
 // ── Main Screen ────────────────────────────────────────────────────────────────
-export default function StudentProfileScreen({ navigation }: { navigation: any }) {
+export default function StudentProfileScreen({
+  navigation,
+}: {
+  navigation: any;
+}) {
   return (
     <View style={styles.root}>
       {/* ── Header ── */}
       <View style={styles.header}>
+        {/* "← BACK TO MATCHES" row */}
         <TouchableOpacity
           style={styles.backBtn}
           onPress={() => navigation?.goBack?.()}
         >
-          <Ionicons name="arrow-back" size={16} color={Colors.textMuted} />
+          <Ionicons name="arrow-back" size={14} color={Colors.textMuted} />
           <Text style={styles.backText}>BACK TO MATCHES</Text>
         </TouchableOpacity>
 
-        <View style={styles.headerRight}>
+        {/* "StudyMatch" + avatar row */}
+        <View style={styles.headerRow}>
           <Text style={styles.headerTitle}>StudyMatch</Text>
           <TouchableOpacity style={styles.avatarCircle}>
-            <Ionicons name="person" size={16} color={Colors.white} />
+            <Ionicons name="person" size={16} color={Colors.textSecondary} />
           </TouchableOpacity>
         </View>
       </View>
@@ -106,83 +107,76 @@ export default function StudentProfileScreen({ navigation }: { navigation: any }
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Hero Photo ── */}
-        <View style={styles.heroPhoto}>
-          <Ionicons name="person" size={64} color={Colors.textLight} />
-          <Text style={styles.photoPlaceholderText}>Photo</Text>
-        </View>
-
-        {/* ── Name ── */}
-        <View style={styles.nameBanner}>
-          <Text style={styles.deptYearText}>
-            {MOCK_PROFILE.department.toUpperCase()} • {MOCK_PROFILE.year.toUpperCase()}
-          </Text>
-          <Text style={styles.nameText}>
-            {MOCK_PROFILE.name}, {MOCK_PROFILE.age}
-          </Text>
-        </View>
-
-        {/* ── Study Bio ── */}
-        <View style={styles.section}>
-          <View style={styles.bioLabelRow}>
-            <Ionicons name="document-text-outline" size={14} color={Colors.primary} />
-            <Text style={styles.sectionLabel}>STUDY BIO</Text>
+        {/* ── Hero Photo with name overlaid ── */}
+        <View style={styles.heroContainer}>
+          <View style={styles.heroPhoto}>
+            <Ionicons name="person" size={80} color={Colors.textMuted} />
           </View>
-          <Text style={styles.bioText}>{MOCK_PROFILE.bio}</Text>
+          {/* Gradient-style overlay at bottom of photo */}
+          <View style={styles.heroOverlay}>
+            <Text style={styles.heroName}>
+              {MOCK_PROFILE.name}, {MOCK_PROFILE.age}
+            </Text>
+            <Text style={styles.heroDept}>
+              {MOCK_PROFILE.department.toUpperCase()} · {MOCK_PROFILE.year.toUpperCase()}
+            </Text>
+          </View>
         </View>
 
-        {/* ── Trust Score ── */}
-        <View style={styles.section}>
-          <View style={styles.trustRow}>
-            <View>
-              <Text style={styles.sectionLabel}>TRUST SCORE</Text>
-              <StarRating score={MOCK_PROFILE.trustScore} />
+        <View style={styles.content}>
+          {/* ── Study Bio ── */}
+          <View style={styles.card}>
+            <Text style={styles.cardLabel}>STUDY BIO</Text>
+            <Text style={styles.bioText}>{MOCK_PROFILE.bio}</Text>
+          </View>
+
+          {/* ── Trust Score ── */}
+          <View style={styles.card}>
+            <Text style={styles.cardLabel}>TRUST SCORE</Text>
+            <View style={styles.trustRow}>
+              <View>
+                <StarRating score={MOCK_PROFILE.trustScore} />
+              </View>
+              <View style={styles.trustRight}>
+                <Text style={styles.trustScore}>{MOCK_PROFILE.trustScore}</Text>
+                <Text style={styles.sessionCount}>
+                  {MOCK_PROFILE.sessionCount} sessions
+                </Text>
+              </View>
             </View>
-            <View style={styles.trustRight}>
-              <Text style={styles.trustScore}>{MOCK_PROFILE.trustScore}</Text>
-              <Text style={styles.sessionCount}>
-                {MOCK_PROFILE.sessionCount} sessions
-              </Text>
+          </View>
+
+          {/* ── Availability ── */}
+          <View style={styles.card}>
+            <Text style={styles.cardLabel}>AVAILABILITY</Text>
+            <View style={styles.chipsRow}>
+              {MOCK_PROFILE.availability.map((a) => (
+                <AvailabilityChip key={a.label} label={a.label} active={a.active} />
+              ))}
+            </View>
+          </View>
+
+          {/* ── Study Style Badges (2×2 grid) ── */}
+          <View style={styles.card}>
+            <Text style={styles.cardLabel}>STUDY STYLE BADGES</Text>
+            <View style={styles.badgeDivider} />
+            <View style={styles.badgesGrid}>
+              {MOCK_PROFILE.badges.map((b) => (
+                <BadgeChip key={b.label} icon={b.icon} label={b.label} />
+              ))}
             </View>
           </View>
         </View>
 
-        {/* ── Availability ── */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>AVAILABILITY</Text>
-          <View style={styles.chipsRow}>
-            {MOCK_PROFILE.availability.map((a, i) => (
-              <AvailabilityChip key={a} label={a} active={i < 2} />
-            ))}
-          </View>
-        </View>
-
-        {/* ── Badges ── */}
-        <View style={styles.section}>
-          <View style={styles.badgeLabelRow}>
-            <Text style={styles.badgeSectionIcon}>🎓</Text>
-            <Text style={styles.sectionLabel}>STUDY STYLE BADGES</Text>
-          </View>
-          <View style={styles.divider} />
-          <View style={styles.badgesGrid}>
-            {MOCK_PROFILE.badges.map((b) => (
-              <BadgeChip key={b.label} icon={b.icon} label={b.label} />
-            ))}
-          </View>
-        </View>
-
-        <View style={{ height: Spacing.xxxl + 20 }} />
+        <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* ── Bottom Actions ── */}
+      {/* ── Bottom Action Buttons ── */}
       <View style={styles.bottomActions}>
         <TouchableOpacity style={styles.passBtn}>
-          <Ionicons name="close" size={16} color={Colors.textMuted} />
           <Text style={styles.passBtnText}>PASS</Text>
         </TouchableOpacity>
-
         <TouchableOpacity style={styles.connectBtn}>
-          <Ionicons name="chatbubble" size={16} color={Colors.white} />
           <Text style={styles.connectBtnText}>CONNECT</Text>
         </TouchableOpacity>
       </View>
@@ -199,9 +193,10 @@ const styles = StyleSheet.create({
 
   // Header
   header: {
-    paddingTop: 56,
+    paddingTop: 52,
     paddingHorizontal: Spacing.base,
     paddingBottom: Spacing.sm,
+    backgroundColor: Colors.background,
   },
   backBtn: {
     flexDirection: 'row',
@@ -212,89 +207,93 @@ const styles = StyleSheet.create({
   backText: {
     fontSize: Typography.size.xs,
     color: Colors.textMuted,
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
     fontWeight: Typography.weight.medium,
   },
-  headerRight: {
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
   headerTitle: {
-    fontSize: Typography.size.lg,
+    fontSize: Typography.size.xl,
     fontWeight: Typography.weight.bold,
     color: Colors.primary,
   },
   avatarCircle: {
-    width: 34,
-    height: 34,
+    width: 36,
+    height: 36,
     borderRadius: Radius.full,
-    backgroundColor: Colors.primaryMuted,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
   scroll: { flex: 1 },
-  scrollContent: { paddingBottom: Spacing.xxl },
+  scrollContent: { paddingBottom: Spacing.xl },
 
   // Hero photo
+  heroContainer: {
+    width: '100%',
+    height: 320,
+  },
   heroPhoto: {
     width: '100%',
-    height: width * 0.85,
-    backgroundColor: Colors.borderLight,
+    height: '100%',
+    backgroundColor: Colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.sm,
   },
-  photoPlaceholderText: {
-    fontSize: Typography.size.md,
-    color: Colors.textLight,
+  // Dark scrim + name text, absolutely positioned at photo bottom
+  heroOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: Spacing.base,
+    paddingTop: Spacing.xl,
+    paddingBottom: Spacing.base,
+    backgroundColor: 'rgba(0, 8, 20, 0.6)',
   },
-
-  // Name banner
-  nameBanner: {
-    alignItems: 'center',
-    paddingVertical: Spacing.xl,
-    backgroundColor: Colors.background,
-  },
-  deptYearText: {
-    fontSize: Typography.size.xs,
-    color: Colors.textMuted,
-    letterSpacing: 1,
-    fontWeight: Typography.weight.medium,
-  },
-  nameText: {
+  heroName: {
     fontSize: Typography.size.xxl,
     fontWeight: Typography.weight.bold,
-    color: Colors.primary,
-    marginTop: Spacing.xs,
     fontStyle: 'italic',
+    color: Colors.textPrimary,
+  },
+  heroDept: {
+    fontSize: Typography.size.xs,
+    color: Colors.textSecondary,
+    letterSpacing: 1,
+    fontWeight: Typography.weight.medium,
+    marginTop: 4,
   },
 
-  // Sections
-  section: {
-    marginHorizontal: Spacing.base,
-    marginBottom: Spacing.base,
+  // Content padding
+  content: {
+    paddingHorizontal: Spacing.base,
+    paddingTop: Spacing.base,
+  },
+
+  // Cards
+  card: {
     backgroundColor: Colors.surface,
     borderRadius: Radius.md,
     padding: Spacing.base,
+    marginBottom: Spacing.base,
     ...Shadow.card,
   },
-  sectionLabel: {
+  cardLabel: {
     fontSize: Typography.size.xs,
     fontWeight: Typography.weight.semibold,
     color: Colors.primary,
-    letterSpacing: 0.8,
+    letterSpacing: 1,
     marginBottom: Spacing.sm,
   },
 
   // Bio
-  bioLabelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-    marginBottom: Spacing.sm,
-  },
   bioText: {
     fontSize: Typography.size.md,
     color: Colors.textSecondary,
@@ -302,7 +301,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
 
-  // Trust
+  // Trust score
   trustRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -317,7 +316,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   trustScore: {
-    fontSize: Typography.size.xl,
+    fontSize: Typography.size.xxl,
     fontWeight: Typography.weight.bold,
     color: Colors.textPrimary,
   },
@@ -327,13 +326,13 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  // Availability
+  // Availability chips
   chipsRow: {
     flexDirection: 'row',
     gap: Spacing.sm,
     flexWrap: 'wrap',
   },
-  availChip: {
+  chip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
@@ -342,40 +341,30 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     paddingHorizontal: Spacing.md,
     paddingVertical: 6,
-    backgroundColor: Colors.surface,
   },
-  availChipActive: {
-    borderColor: Colors.primaryMuted,
-    backgroundColor: Colors.surfaceWarm,
+  chipActive: {
+    borderColor: Colors.surfaceHigh,
+    backgroundColor: Colors.surfaceMid,
   },
-  availDot: {
+  chipDot: {
     width: 7,
     height: 7,
     borderRadius: Radius.full,
     backgroundColor: Colors.primary,
   },
-  availText: {
+  chipText: {
     fontSize: Typography.size.sm,
     color: Colors.textMuted,
   },
-  availTextActive: {
+  chipTextActive: {
     color: Colors.textPrimary,
     fontWeight: Typography.weight.medium,
   },
 
   // Badges
-  badgeLabelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-    marginBottom: Spacing.sm,
-  },
-  badgeSectionIcon: {
-    fontSize: 14,
-  },
-  divider: {
+  badgeDivider: {
     height: 1,
-    backgroundColor: Colors.borderLight,
+    backgroundColor: Colors.border,
     marginBottom: Spacing.md,
   },
   badgesGrid: {
@@ -387,12 +376,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
+    // Two columns: total width minus card padding (×2) minus one gap, divided by 2
+    width: (width - Spacing.base * 4 - Spacing.sm) / 2,
+    backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
     borderRadius: Radius.sm,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
-    backgroundColor: Colors.surface,
   },
   badgeIcon: {
     fontSize: 16,
@@ -401,9 +392,10 @@ const styles = StyleSheet.create({
     fontSize: Typography.size.sm,
     color: Colors.textPrimary,
     fontWeight: Typography.weight.medium,
+    flexShrink: 1,
   },
 
-  // Bottom actions
+  // Bottom action buttons
   bottomActions: {
     flexDirection: 'row',
     paddingHorizontal: Spacing.base,
@@ -411,42 +403,38 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
     backgroundColor: Colors.background,
     borderTopWidth: 1,
-    borderTopColor: Colors.borderLight,
+    borderTopColor: Colors.border,
     gap: Spacing.md,
   },
   passBtn: {
     flex: 1,
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.sm,
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.base,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: Colors.surfaceHigh,
     borderRadius: Radius.md,
-    backgroundColor: Colors.surface,
+    backgroundColor: Colors.surfaceHigh,
   },
   passBtnText: {
-    fontSize: Typography.size.sm,
+    fontSize: Typography.size.base,
     fontWeight: Typography.weight.semibold,
-    color: Colors.textMuted,
-    letterSpacing: 0.5,
+    color: Colors.textSecondary,
+    letterSpacing: 1,
   },
   connectBtn: {
-    flex: 2,
-    flexDirection: 'row',
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.sm,
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.base,
     backgroundColor: Colors.primary,
     borderRadius: Radius.md,
-    ...Shadow.card,
+    ...Shadow.glow,
   },
   connectBtnText: {
-    fontSize: Typography.size.sm,
+    fontSize: Typography.size.base,
     fontWeight: Typography.weight.bold,
-    color: Colors.white,
-    letterSpacing: 0.5,
+    color: Colors.textOnYellow,
+    letterSpacing: 1,
   },
 });

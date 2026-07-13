@@ -112,6 +112,15 @@ export interface SessionCard {
   timeRange: string;
 }
 
+export interface DiscoveryFilters {
+  institution: string;
+  selectedUni: string;
+  distance: number;
+  minAge: number;
+  maxAge: number;
+  departments: string[];
+}
+
 // Navigation param types
 export type RootStackParamList = {
   MainTabs: undefined;
@@ -119,12 +128,13 @@ export type RootStackParamList = {
   Chat: { matchId: string };
   StudyDatePlanner: { matchId: string };
   EditProfile: undefined;
-  Filter: undefined;
+  Filter: { current?: DiscoveryFilters } | undefined;
+  MatchFound: undefined;
 };
 
 export type TabParamList = {
   Dashboard: undefined;
-  Match: undefined;
+  Match: { filters?: DiscoveryFilters } | undefined;
   Chats: undefined;
   Planner: undefined;
   Profile: undefined;

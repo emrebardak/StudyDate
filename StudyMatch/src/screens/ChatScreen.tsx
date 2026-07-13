@@ -11,82 +11,81 @@ import {
   Dimensions,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { Colors, Spacing, Radius, Shadow, Typography } from '../theme';
+import { Colors, Spacing, Radius, Typography, Shadow } from '../theme';
 
 const { width } = Dimensions.get('window');
 
-// ── Mock Data ─────────────────────────────────────────────────────────────────
-const MATCH = {
-  alias: 'Anon_Chem101',
-  messageCount: 3,
-  revealThreshold: 10,
-  isRevealed: false,
-};
-
+// ── Mock Data ──────────────────────────────────────────────────────────────────
 const MOCK_MESSAGES = [
   {
     id: '1',
     senderId: 'other',
     content:
-      "Hey! I saw you're also taking O-Chem this semester. The syllabus looks brutal.",
+      'Hey! Just went over the quantum mechanics chapter. That wave function problem is actually pretty elegant once you see it.',
     time: '14:05',
   },
   {
     id: '2',
+    senderId: 'other',
+    content:
+      'Have you started on the problem set yet? I think section 3 is going to hurt.',
+    time: '14:07',
+  },
+  {
+    id: '3',
     senderId: 'me',
     content:
-      "Tell me about it. I'm already stuck on Chapter 2 mechanisms. Do you prefer studying in the library or a cafe?",
+      "Not yet, but I'm free Thursday evening if you want to tackle it together. Library 3rd floor?",
     time: '14:12',
   },
 ];
 
-// ── Sub-components ─────────────────────────────────────────────────────────────
-function MatchHeader({ revealed }: { revealed: boolean }) {
-  return (
-    <View style={styles.matchHeader}>
-      {/* Blurred avatar */}
-      <View style={styles.blurredAvatar}>
-        {revealed ? (
-          <Ionicons name="person" size={28} color={Colors.white} />
-        ) : (
-          <View style={styles.blurOverlay}>
-            <Ionicons name="person" size={28} color="rgba(255,255,255,0.3)" />
-          </View>
-        )}
-      </View>
-
-      {/* Alias + progress */}
-      <Text style={styles.matchAlias}>
-        Locked Match: {MATCH.alias}
-      </Text>
-      <Text style={styles.matchSubtitle}>
-        {MATCH.messageCount} messages sent. Reveal at {MATCH.revealThreshold}.
-      </Text>
-
-      {/* Reveal button */}
-      <TouchableOpacity style={styles.revealBtn}>
-        <Ionicons name="eye-outline" size={14} color={Colors.primary} />
-        <Text style={styles.revealBtnText}>REVEAL PROFILE</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
+// ── Message Bubble ─────────────────────────────────────────────────────────────
 function MessageBubble({
   message,
 }: {
-  message: { senderId: string; content: string; time: string };
+  message: (typeof MOCK_MESSAGES)[0];
 }) {
   const isMe = message.senderId === 'me';
   return (
     <View style={[styles.bubbleRow, isMe && styles.bubbleRowMe]}>
       <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleOther]}>
-        <Text style={[styles.bubbleText, isMe && styles.bubbleTextMe]}>
-          {message.content}
-        </Text>
-        <Text style={[styles.bubbleTime, isMe && styles.bubbleTimeMe]}>
-          {message.time}
-        </Text>
+        <Text style={styles.bubbleText}>{message.content}</Text>
+        <View style={[styles.bubbleMeta, isMe && styles.bubbleMetaMe]}>
+          <Text style={styles.bubbleTime}>{message.time}</Text>
+          {isMe && (
+            <Ionicons
+              name="checkmark-done"
+              size={12}
+              color={Colors.primaryAlt}
+              style={styles.checkIcon}
+            />
+          )}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// ── Reveal Card ────────────────────────────────────────────────────────────────
+function RevealCard() {
+  return (
+    <View style={styles.revealCard}>
+      <View style={styles.revealIconCircle}>
+        <Ionicons name="eye-off" size={28} color={Colors.primary} />
+      </View>
+      <Text style={styles.revealTitle}>Ready to Reveal?</Text>
+      <Text style={styles.revealDesc}>
+        Both of you must agree to reveal your identities. Once confirmed,
+        your profiles will be unlocked.
+      </Text>
+      <View style={styles.revealButtons}>
+        <TouchableOpacity style={styles.btnReveal}>
+          <Text style={styles.btnRevealText}>Reveal</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.btnNotYet}>
+          <Text style={styles.btnNotYetText}>Not Yet</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -106,7 +105,10 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
         id: String(Date.now()),
         senderId: 'me',
         content: inputText.trim(),
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        time: new Date().toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
       },
     ]);
     setInputText('');
@@ -115,23 +117,40 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
 
   return (
     <View style={styles.root}>
-      {/* ── Top Header ── */}
+      {/* ── Header ── */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation?.goBack?.()}>
-          <Ionicons name="menu" size={24} color={Colors.textPrimary} />
+        <TouchableOpacity
+          style={styles.headerBack}
+          onPress={() => navigation?.goBack?.()}
+        >
+          <Ionicons name="arrow-back" size={22} color={Colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>StudyMatch</Text>
-        <TouchableOpacity style={styles.avatarCircle}>
-          <Ionicons name="person" size={16} color={Colors.white} />
+
+        <View style={styles.headerCenter}>
+          <View style={styles.lockCircle}>
+            <Ionicons name="lock-closed" size={14} color={Colors.primary} />
+          </View>
+          <View>
+            <Text style={styles.headerTitle}>Physics Partner</Text>
+            <Text style={styles.headerSubtitle}>Anonymous Match</Text>
+          </View>
+        </View>
+
+        <TouchableOpacity style={styles.headerMenu}>
+          <Ionicons
+            name="ellipsis-vertical"
+            size={20}
+            color={Colors.textSecondary}
+          />
         </TouchableOpacity>
       </View>
 
       <KeyboardAvoidingView
-        style={{ flex: 1 }}
+        style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={0}
       >
-        {/* ── Scrollable chat area ── */}
+        {/* ── Scroll ── */}
         <ScrollView
           ref={scrollRef}
           style={styles.scroll}
@@ -141,51 +160,47 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
             scrollRef.current?.scrollToEnd({ animated: false })
           }
         >
-          {/* Match header card */}
-          <MatchHeader revealed={MATCH.isRevealed} />
-
-          {/* Dashed divider */}
-          <View style={styles.dashedDivider}>
-            {Array.from({ length: 14 }).map((_, i) => (
-              <View key={i} style={styles.dash} />
-            ))}
+          {/* System banner */}
+          <View style={styles.systemBanner}>
+            <Ionicons
+              name="shield-checkmark-outline"
+              size={12}
+              color={Colors.textSecondary}
+            />
+            <Text style={styles.systemBannerText}>
+              Match secured. Identity protected until mutual reveal.
+            </Text>
           </View>
-
-          {/* Connection timestamp */}
-          <Text style={styles.connectionTimestamp}>
-            Connection established. Oct 24, 14:02
-          </Text>
 
           {/* Messages */}
           {messages.map((msg) => (
             <MessageBubble key={msg.id} message={msg} />
           ))}
+
+          {/* Reveal card */}
+          <RevealCard />
         </ScrollView>
 
         {/* ── Input Bar ── */}
         <View style={styles.inputBar}>
-          {/* Planner shortcut */}
-          <TouchableOpacity style={styles.plannerBtn}>
-            <Ionicons name="calendar-outline" size={20} color={Colors.textMuted} />
+          <TouchableOpacity style={styles.addBtn}>
+            <Ionicons name="add" size={22} color={Colors.textSecondary} />
           </TouchableOpacity>
 
           <TextInput
             style={styles.textInput}
             placeholder="Type a message..."
-            placeholderTextColor={Colors.textLight}
+            placeholderTextColor={Colors.textMuted}
             value={inputText}
             onChangeText={setInputText}
             multiline
-            onSubmitEditing={handleSend}
           />
 
           <TouchableOpacity style={styles.sendBtn} onPress={handleSend}>
-            <Ionicons name="send" size={18} color={Colors.white} />
+            <Ionicons name="arrow-up" size={18} color={Colors.textOnYellow} />
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
-
-
     </View>
   );
 }
@@ -194,120 +209,85 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: Colors.accentBg,
+    backgroundColor: Colors.background,
   },
+  flex: { flex: 1 },
 
   // Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: Spacing.base,
-    paddingTop: 56,
+    paddingTop: 52,
     paddingBottom: Spacing.md,
-    backgroundColor: Colors.accentBg,
+    backgroundColor: Colors.background,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  headerBack: {
+    padding: Spacing.xs,
+    marginRight: Spacing.sm,
+  },
+  headerCenter: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  lockCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: Radius.full,
+    borderWidth: 1.5,
+    borderColor: Colors.borderGold,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.surface,
   },
   headerTitle: {
-    fontSize: Typography.size.lg,
+    fontSize: Typography.size.base,
     fontWeight: Typography.weight.bold,
     color: Colors.primary,
-    letterSpacing: 0.5,
   },
-  avatarCircle: {
-    width: 34,
-    height: 34,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.primaryMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
+  headerSubtitle: {
+    fontSize: Typography.size.xs,
+    color: Colors.textSecondary,
+    marginTop: 1,
   },
-
-  // Match header card
-  matchHeader: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
-    padding: Spacing.base,
-    alignItems: 'center',
-    marginBottom: Spacing.base,
-    ...Shadow.card,
-  },
-  blurredAvatar: {
-    width: 64,
-    height: 64,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.primaryMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.sm,
-    overflow: 'hidden',
-  },
-  blurOverlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(100,70,50,0.6)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  matchAlias: {
-    fontSize: Typography.size.md,
-    fontWeight: Typography.weight.semibold,
-    color: Colors.primary,
-  },
-  matchSubtitle: {
-    fontSize: Typography.size.sm,
-    color: Colors.textMuted,
-    marginTop: 2,
-    marginBottom: Spacing.sm,
-  },
-  revealBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-    borderWidth: 1,
-    borderColor: Colors.primary,
-    borderRadius: Radius.sm,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 6,
-  },
-  revealBtnText: {
-    fontSize: Typography.size.sm,
-    fontWeight: Typography.weight.semibold,
-    color: Colors.primary,
-    letterSpacing: 0.5,
-  },
-
-  // Dashed divider
-  dashedDivider: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 6,
-    marginBottom: Spacing.md,
-  },
-  dash: {
-    width: 8,
-    height: 1.5,
-    backgroundColor: Colors.border,
-    borderRadius: Radius.full,
-  },
-
-  connectionTimestamp: {
-    fontSize: Typography.size.sm,
-    color: Colors.textMuted,
-    textAlign: 'center',
-    marginBottom: Spacing.base,
+  headerMenu: {
+    padding: Spacing.xs,
   },
 
   // Scroll
   scroll: { flex: 1 },
   scrollContent: {
-    padding: Spacing.base,
-    paddingBottom: Spacing.sm,
+    paddingHorizontal: Spacing.base,
+    paddingTop: Spacing.base,
+    paddingBottom: Spacing.xl,
+  },
+
+  // System banner
+  systemBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    gap: Spacing.xs,
+    backgroundColor: Colors.surfaceHigh,
+    borderRadius: Radius.full,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.sm,
+    marginBottom: Spacing.lg,
+  },
+  systemBannerText: {
+    fontSize: Typography.size.xs,
+    color: Colors.textSecondary,
   },
 
   // Bubbles
   bubbleRow: {
     flexDirection: 'row',
-    marginBottom: Spacing.md,
     justifyContent: 'flex-start',
+    marginBottom: Spacing.md,
   },
   bubbleRowMe: {
     justifyContent: 'flex-end',
@@ -316,33 +296,99 @@ const styles = StyleSheet.create({
     maxWidth: width * 0.72,
     borderRadius: Radius.lg,
     padding: Spacing.md,
-    paddingBottom: Spacing.sm,
   },
   bubbleOther: {
     backgroundColor: Colors.surface,
-    borderTopLeftRadius: 4,
-    ...Shadow.card,
+    borderTopLeftRadius: Radius.sm,
   },
   bubbleMe: {
-    backgroundColor: Colors.primary,
-    borderTopRightRadius: 4,
+    backgroundColor: Colors.surfaceHigh,
+    borderTopRightRadius: Radius.sm,
   },
   bubbleText: {
     fontSize: Typography.size.md,
     color: Colors.textPrimary,
     lineHeight: 22,
   },
-  bubbleTextMe: {
-    color: Colors.white,
+  bubbleMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    alignSelf: 'flex-start',
+  },
+  bubbleMetaMe: {
+    alignSelf: 'flex-end',
   },
   bubbleTime: {
     fontSize: Typography.size.xs,
     color: Colors.textMuted,
-    alignSelf: 'flex-end',
-    marginTop: 4,
   },
-  bubbleTimeMe: {
-    color: 'rgba(255,255,255,0.6)',
+  checkIcon: {
+    marginLeft: 3,
+  },
+
+  // Reveal card
+  revealCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: Spacing.xl,
+    alignItems: 'center',
+    marginTop: Spacing.base,
+    ...Shadow.card,
+  },
+  revealIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.surfaceHigh,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.base,
+  },
+  revealTitle: {
+    fontSize: Typography.size.xl,
+    fontWeight: Typography.weight.bold,
+    color: Colors.textPrimary,
+    marginBottom: Spacing.sm,
+    textAlign: 'center',
+  },
+  revealDesc: {
+    fontSize: Typography.size.sm,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: Spacing.lg,
+  },
+  revealButtons: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    width: '100%',
+  },
+  btnReveal: {
+    flex: 1,
+    alignItems: 'center',
+    backgroundColor: Colors.primary,
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.md,
+  },
+  btnRevealText: {
+    fontSize: Typography.size.base,
+    fontWeight: Typography.weight.bold,
+    color: Colors.textOnYellow,
+  },
+  btnNotYet: {
+    flex: 1,
+    alignItems: 'center',
+    backgroundColor: Colors.surfaceHigh,
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  btnNotYetText: {
+    fontSize: Typography.size.base,
+    fontWeight: Typography.weight.semibold,
+    color: Colors.textPrimary,
   },
 
   // Input bar
@@ -354,34 +400,32 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.md,
     gap: Spacing.sm,
     borderTopWidth: 1,
-    borderTopColor: Colors.borderLight,
+    borderTopColor: Colors.border,
   },
-  plannerBtn: {
-    width: 36,
-    height: 36,
+  addBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.surfaceHigh,
     alignItems: 'center',
     justifyContent: 'center',
   },
   textInput: {
     flex: 1,
-    backgroundColor: Colors.surfaceWarm,
+    backgroundColor: Colors.surfaceHigh,
     borderRadius: Radius.xl,
-    paddingHorizontal: Spacing.md,
+    paddingHorizontal: Spacing.base,
     paddingVertical: Spacing.sm,
-    fontSize: Typography.size.md,
+    fontSize: Typography.size.base,
     color: Colors.textPrimary,
     maxHeight: 100,
-    borderWidth: 1,
-    borderColor: Colors.borderLight,
   },
   sendBtn: {
     width: 40,
     height: 40,
-    borderRadius: Radius.full,
+    borderRadius: Radius.md,
     backgroundColor: Colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
-
-
 });

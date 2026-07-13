@@ -7,72 +7,37 @@ import {
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import VintageStamp from './VintageStamp';
-import {
-  AUDIO_STAMPS,
-  PACING_STAMPS,
-  FUEL_STAMPS,
-  type AudioEnvironment,
-  type StudyPacing,
-  type StudyFuel,
-} from '../types';
+import { AUDIO_STAMPS, PACING_STAMPS, FUEL_STAMPS } from '../types';
 
-const { width } = Dimensions.get('window');
-export const CARD_WIDTH = width - 32;
+// ── Colors ────────────────────────────────────────────────────────────────────
+const SURFACE      = '#001d3d'; // Prussian Blue
+const SURFACE_HIGH = '#003566'; // Regal Navy
+const SURFACE_MID  = '#00214a';
+const PRIMARY      = '#ffc300'; // School Bus Yellow
+const GOLD         = '#ffd60a';
+const TEXT         = '#FFFFFF';
+const TEXT_MUTED   = '#8899AA';
+const TEXT_DIM     = '#4A6080';
+const ON_PRIMARY   = '#000814';
 
-// ── Color constants ────────────────────────────────────────────────────────────
-const CARD_BG       = '#F5DAA7'; // warm amber parchment
-const BURGUNDY      = '#662222';
-const INK_DARK      = '#2C1A0E';
-const INK_MUTED     = '#7A5C3A';
-const PHOTO_BG      = '#B0A090';
-const BLUR_OVERLAY  = 'rgba(130,95,65,0.52)';
-const RULED_LINE    = 'rgba(102,34,34,0.12)';
+export const CARD_WIDTH = Dimensions.get('window').width - 32;
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
 export const MOCK_PROFILE_CARD = {
-  name: 'Eleanor',
-  age: 21,
-  university: 'Istanbul Tech.',
-  department: 'Computer Science',
-  year: 'Junior',
+  name: 'Elena Rostova',
+  age: 23,
+  university: 'MIT',
+  department: 'Biomedical Engineering',
+  year: 'Research Fellow',
   trustScore: 4.8,
-  goalText: 'Mastering Data Structures — focusing on Big O notation today.',
+  goalText:
+    'Seeking a disciplined study partner for thesis review and deep-work sessions. Familiarity with MATLAB is a plus.',
   isRevealed: false,
-  audio: 'Headphones On / Ignored World' as AudioEnvironment,
-  pacing: 'Strict Pomodoro (25/5)' as StudyPacing,
-  fuel: 'Black Filter Coffee' as StudyFuel,
+  isVerified: true,
+  audio: 'Headphones On / Ignored World' as const,
+  pacing: 'Strict Pomodoro (25/5)' as const,
+  fuel: 'Black Filter Coffee' as const,
 };
-
-// ── Sub-components ─────────────────────────────────────────────────────────────
-
-// Typewriter-style label
-function TypewriterText({
-  text,
-  style,
-}: {
-  text: string;
-  style?: object;
-}) {
-  return (
-    <Text style={[styles.typewriter, style]}>{text}</Text>
-  );
-}
-
-// Ruled paper lines beneath the goal text
-function RuledLines({ count = 3 }: { count?: number }) {
-  return (
-    <View style={styles.ruledLines}>
-      {Array.from({ length: count }).map((_, i) => (
-        <View key={i} style={styles.ruledLine} />
-      ))}
-    </View>
-  );
-}
-
-// Corner fold decoration
-function CornerFold() {
-  return <View style={styles.cornerFold} />;
-}
 
 // ── Main ProfileCard ───────────────────────────────────────────────────────────
 interface Props {
@@ -86,265 +51,260 @@ export default function ProfileCard({ profile = MOCK_PROFILE_CARD }: Props) {
 
   return (
     <View style={styles.card}>
-      <CornerFold />
 
-      {/* ── Photo zone (blurred until revealed) ── */}
+      {/* ── PHOTO ZONE ──────────────────────────────────────────────────────── */}
       <View style={styles.photoZone}>
+        {/* Dark placeholder */}
         <View style={styles.photoBg} />
-        {!profile.isRevealed && <View style={styles.blurLayer} />}
-        <View style={styles.photoOverlayContent}>
-          {!profile.isRevealed ? (
-            <>
-              <Ionicons name="eye-off-outline" size={32} color="rgba(255,255,255,0.75)" />
-              <Text style={styles.lockedLabel}>PHOTO LOCKED</Text>
-            </>
-          ) : (
-            <Ionicons name="person" size={48} color="rgba(255,255,255,0.4)" />
-          )}
+
+        {/* Centred silhouette */}
+        <View style={styles.silhouetteContainer}>
+          <Ionicons
+            name={profile.isRevealed ? 'person' : 'person-outline'}
+            size={80}
+            color="rgba(255,255,255,0.08)"
+          />
         </View>
 
-        {/* University tag in photo — like a camera date stamp */}
-        <View style={styles.dateStamp}>
-          <Text style={styles.dateStampText}>
-            {profile.university.toUpperCase()} • {new Date().getFullYear()}
+        {/* Faux gradient – three stacked overlays darkening toward the bottom */}
+        <View style={styles.gradFull} />
+        <View style={styles.gradMid} />
+        <View style={styles.gradBottom} />
+
+        {/* Verified badge – top right */}
+        {profile.isVerified && (
+          <View style={styles.verifiedBadge}>
+            <Ionicons name="checkmark-circle" size={28} color={PRIMARY} />
+          </View>
+        )}
+
+        {/* Trust score – top left */}
+        <View style={styles.trustBadge}>
+          <Ionicons name="star" size={11} color={PRIMARY} />
+          <Text style={styles.trustText}>{profile.trustScore}</Text>
+        </View>
+
+        {/* Bottom content: name / dept / tags */}
+        <View style={styles.photoBottom}>
+          <Text style={styles.photoName}>
+            {profile.name}, {profile.age}
           </Text>
+          <Text style={styles.photoDept}>{profile.department}</Text>
+          <View style={styles.tagRow}>
+            <View style={styles.tagNavy}>
+              <Text style={styles.tagNavyText}>{profile.university}</Text>
+            </View>
+            <View style={styles.tagGold}>
+              <Text style={styles.tagGoldText}>
+                {profile.year.toUpperCase()}
+              </Text>
+            </View>
+          </View>
         </View>
       </View>
 
-      {/* ── Info zone ── */}
-      <View style={styles.infoZone}>
-
-        {/* Name row */}
-        <View style={styles.nameRow}>
-          <View>
-            <TypewriterText
-              text={`${profile.name}, ${profile.age}`}
-              style={styles.nameText}
-            />
-            <TypewriterText
-              text={`${profile.department.toUpperCase()} · ${profile.year.toUpperCase()}`}
-              style={styles.deptText}
-            />
-          </View>
-          {/* Trust score */}
-          <View style={styles.scoreBox}>
-            <Text style={styles.scoreValue}>{profile.trustScore}</Text>
-            <Text style={styles.scoreStar}>★</Text>
-          </View>
-        </View>
-
-        {/* Divider — red ink line */}
-        <View style={styles.inkDivider} />
-
-        {/* Today's goal — chalkboard / handwritten style */}
-        <View style={styles.goalSection}>
-          <Text style={styles.goalLabel}>— TODAY'S FOCUS —</Text>
-          <Text style={styles.goalText}>"{profile.goalText}"</Text>
-          <RuledLines count={2} />
-        </View>
-
-        {/* ── Stamps row ── */}
-        <View style={styles.stampsSection}>
-          <Text style={styles.stampsLabel}>STUDY VIBE</Text>
-          <View style={styles.stampsRow}>
-            {/* Audio stamp — placed with slight random offsets */}
-            <View style={[styles.stampSlot, { marginTop: 6 }]}>
-              <VintageStamp stamp={audioStamp} size="md" />
-            </View>
-            {/* Pacing stamp */}
-            <View style={[styles.stampSlot, { marginTop: -4 }]}>
-              <VintageStamp stamp={pacingStamp} size="md" />
-            </View>
-            {/* Fuel stamp */}
-            <View style={[styles.stampSlot, { marginTop: 10 }]}>
-              <VintageStamp stamp={fuelStamp} size="md" />
-            </View>
-          </View>
-        </View>
-
+      {/* ── BIO SECTION ─────────────────────────────────────────────────────── */}
+      <View style={styles.bioSection}>
+        <View style={styles.bioBar} />
+        <Text style={styles.bioText}>"{profile.goalText}"</Text>
       </View>
+
+      {/* ── STAMPS SECTION ──────────────────────────────────────────────────── */}
+      <View style={styles.stampsSection}>
+        <Text style={styles.stampsLabel}>STUDY VIBE</Text>
+        <View style={styles.stampsRow}>
+          <View style={styles.stampSlot1}>
+            <VintageStamp stamp={audioStamp} size="md" />
+          </View>
+          <View style={styles.stampSlot2}>
+            <VintageStamp stamp={pacingStamp} size="md" />
+          </View>
+          <View style={styles.stampSlot3}>
+            <VintageStamp stamp={fuelStamp} size="md" />
+          </View>
+        </View>
+      </View>
+
     </View>
   );
 }
 
-// ── Styles ─────────────────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   card: {
     width: CARD_WIDTH,
-    backgroundColor: CARD_BG,
-    borderRadius: 12,
+    backgroundColor: SURFACE,
+    borderRadius: 16,
     overflow: 'hidden',
-    shadowColor: '#2C1A0E',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-    elevation: 8,
-    position: 'relative',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.55,
+    shadowRadius: 20,
+    elevation: 12,
   },
 
-  // Corner fold (paper aesthetic)
-  cornerFold: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    width: 0,
-    height: 0,
-    borderStyle: 'solid',
-    borderTopWidth: 28,
-    borderLeftWidth: 28,
-    borderTopColor: '#D4A843',
-    borderLeftColor: CARD_BG,
-    zIndex: 10,
-  },
-
-  // Photo zone
+  // ── Photo zone
   photoZone: {
     width: '100%',
-    height: 200,
+    height: 340,
     position: 'relative',
     overflow: 'hidden',
   },
   photoBg: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: PHOTO_BG,
+    backgroundColor: SURFACE_MID,
   },
-  blurLayer: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: BLUR_OVERLAY,
-  },
-  photoOverlayContent: {
+  silhouetteContainer: {
     ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-  },
-  lockedLabel: {
-    color: 'rgba(255,255,255,0.65)',
-    fontSize: 10,
-    letterSpacing: 2,
-    fontWeight: '700',
   },
 
-  // Camera date stamp overlay
-  dateStamp: {
+  // Faux gradient layers (lightest → darkest toward the bottom)
+  gradFull: {
     position: 'absolute',
-    bottom: 10,
-    right: 10,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 2,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 220,
+    backgroundColor: 'rgba(0,8,20,0.28)',
   },
-  dateStampText: {
-    color: '#F5DAA7',
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 1.5,
-    fontFamily: 'monospace',
+  gradMid: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 140,
+    backgroundColor: 'rgba(0,8,20,0.45)',
   },
-
-  // Info zone
-  infoZone: {
-    padding: 14,
-    gap: 10,
-    backgroundColor: CARD_BG,
-  },
-
-  // Name row
-  nameRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  nameText: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: INK_DARK,
-    letterSpacing: 0.5,
-  },
-  deptText: {
-    fontSize: 10,
-    color: INK_MUTED,
-    letterSpacing: 1.2,
-    marginTop: 2,
+  gradBottom: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 72,
+    backgroundColor: 'rgba(0,8,20,0.62)',
   },
 
-  // Typewriter style
-  typewriter: {
-    fontFamily: 'monospace',
-    color: INK_DARK,
+  // Verified badge
+  verifiedBadge: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0,8,20,0.50)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
-  // Trust score box
-  scoreBox: {
+  // Trust score pill
+  trustBadge: {
+    position: 'absolute',
+    top: 14,
+    left: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: BURGUNDY,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    gap: 2,
-    transform: [{ rotate: '1.5deg' }],
+    gap: 4,
+    backgroundColor: 'rgba(0,8,20,0.50)',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 20,
   },
-  scoreValue: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#FAF5EE',
-  },
-  scoreStar: {
-    fontSize: 11,
-    color: '#F5DAA7',
+  trustText: {
+    color: PRIMARY,
+    fontSize: 12,
+    fontWeight: '700',
   },
 
-  // Ink divider
-  inkDivider: {
-    height: 1.5,
-    backgroundColor: BURGUNDY,
-    opacity: 0.35,
-    marginVertical: 2,
+  // Bottom-of-photo content
+  photoBottom: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+    gap: 4,
   },
-
-  // Goal section
-  goalSection: {
-    gap: 6,
+  photoName: {
+    color: TEXT,
+    fontSize: 24,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
-  goalLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: BURGUNDY,
-    letterSpacing: 2,
-    textAlign: 'center',
-    fontFamily: 'monospace',
+  photoDept: {
+    color: GOLD,
+    fontSize: 16,
+    fontWeight: '600',
   },
-  goalText: {
-    fontSize: 13,
-    color: INK_DARK,
-    fontStyle: 'italic',
-    lineHeight: 20,
-    fontFamily: 'monospace',
-  },
-
-  // Ruled lines
-  ruledLines: {
+  tagRow: {
+    flexDirection: 'row',
     gap: 8,
-    marginTop: 4,
+    marginTop: 6,
   },
-  ruledLine: {
-    height: 1,
-    backgroundColor: RULED_LINE,
+  tagNavy: {
+    backgroundColor: SURFACE_HIGH,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 20,
+  },
+  tagNavyText: {
+    color: PRIMARY,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  tagGold: {
+    backgroundColor: PRIMARY,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 20,
+  },
+  tagGoldText: {
+    color: ON_PRIMARY,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
 
-  // Stamps section
+  // ── Bio section
+  bioSection: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    gap: 12,
+    backgroundColor: SURFACE,
+  },
+  bioBar: {
+    width: 3,
+    alignSelf: 'stretch',
+    backgroundColor: PRIMARY,
+    borderRadius: 2,
+    minHeight: 20,
+  },
+  bioText: {
+    flex: 1,
+    color: TEXT_MUTED,
+    fontSize: 14,
+    fontStyle: 'italic',
+    lineHeight: 21,
+  },
+
+  // ── Stamps section
   stampsSection: {
-    gap: 6,
-    marginTop: 4,
+    paddingHorizontal: 16,
+    paddingBottom: 18,
+    gap: 8,
+    backgroundColor: SURFACE,
   },
   stampsLabel: {
-    fontSize: 8,
+    fontSize: 9,
     fontWeight: '800',
-    color: INK_MUTED,
+    color: TEXT_DIM,
     letterSpacing: 2,
-    fontFamily: 'monospace',
   },
   stampsRow: {
     flexDirection: 'row',
@@ -352,5 +312,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     flexWrap: 'wrap',
   },
-  stampSlot: {},
+  stampSlot1: { marginTop: 6 },
+  stampSlot2: { marginTop: -4 },
+  stampSlot3: { marginTop: 10 },
 });
