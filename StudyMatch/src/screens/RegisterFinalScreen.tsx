@@ -8,13 +8,18 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography } from '../theme';
+import { supabase } from '../lib/supabase';
+import { registrationToProfileUpdate } from '../data/mappers';
 
 export default function RegisterFinalScreen({ navigation, route }: { navigation: any; route: any }) {
   const incoming = route?.params?.data ?? {};
   const [focusGoal, setFocusGoal] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   // Random 4-digit StudyMatch id, generated once per mount
   const smId = useRef(Math.floor(1000 + Math.random() * 9000)).current;
@@ -22,11 +27,37 @@ export default function RegisterFinalScreen({ navigation, route }: { navigation:
   const previewName = incoming.fullName || 'New Scholar';
   const previewDept = incoming.department || 'Undeclared Department';
 
-  function handleComplete() {
-    navigation.reset({
-      index: 0,
-      routes: [{ name: 'MainTabs' }],
-    });
+  async function handleComplete() {
+    setError('');
+    setSaving(true);
+    try {
+      // The session was established at Step 1 (signUp). Persist everything collected
+      // across the flow into the user's own public.users row. RLS restricts the UPDATE
+      // to that row; we filter by the authenticated user's id explicitly.
+      const { data: auth } = await supabase.auth.getUser();
+      const userId = auth?.user?.id;
+      if (!userId) {
+        setError('Your session expired. Please restart registration.');
+        return;
+      }
+      const payload = registrationToProfileUpdate({ ...incoming, focusGoal });
+      const { error: updateError } = await supabase
+        .from('users')
+        .update(payload)
+        .eq('id', userId);
+      if (updateError) {
+        setError(updateError.message);
+        return;
+      }
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'MainTabs' }],
+      });
+    } catch (e: any) {
+      setError(e?.message ?? 'Something went wrong. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -82,12 +113,18 @@ export default function RegisterFinalScreen({ navigation, route }: { navigation:
           </TouchableOpacity>
 
           {/* ── Complete CTA ── */}
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
           <TouchableOpacity
-            style={styles.completeBtn}
+            style={[styles.completeBtn, saving && styles.completeBtnDisabled]}
             activeOpacity={0.85}
             onPress={handleComplete}
+            disabled={saving}
           >
-            <Text style={styles.completeBtnText}>Complete Archive</Text>
+            {saving ? (
+              <ActivityIndicator color={Colors.textOnYellow} />
+            ) : (
+              <Text style={styles.completeBtnText}>Complete Archive</Text>
+            )}
           </TouchableOpacity>
 
           {/* ── Live Preview ── */}
@@ -231,12 +268,21 @@ const styles = StyleSheet.create({
   },
 
   // Complete CTA
+  errorText: {
+    fontSize: Typography.size.sm,
+    color: Colors.danger,
+    marginBottom: Spacing.md,
+    lineHeight: 20,
+  },
   completeBtn: {
     alignItems: 'center',
     backgroundColor: Colors.primary,
     borderRadius: Radius.md,
     paddingVertical: Spacing.base,
     marginBottom: Spacing.xxl,
+  },
+  completeBtnDisabled: {
+    opacity: 0.6,
   },
   completeBtnText: {
     fontSize: Typography.size.lg,

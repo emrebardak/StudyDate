@@ -8,7 +8,11 @@ StudyMatch — an academic-first matchmaking app for university students to find
 
 The app is a **React Native CLI project (no Expo)** at `StudyMatch/`, with native `ios/`/`android/` projects committed to the repo. An earlier Expo-managed scaffold (`app/`) was removed — do not reintroduce Expo or suggest Expo-only APIs (`expo-blur`, `expo-image-picker`, etc.) since they are not installed and won't build.
 
-There is no backend yet. Supabase (PostgreSQL, Auth, Realtime, Storage) is planned but not wired up — all screens currently render mock data defined inline in each screen file.
+**Backend is in progress, being built incrementally.** Supabase (PostgreSQL, Auth, Realtime, Storage) runs locally via the Supabase CLI (`StudyMatch/supabase/`, Docker-based) — no hosted project yet. Follow [implemention.md](implemention.md) for the phased build order and current progress; don't assume every table/policy described in the PRD exists yet, and don't assume nothing does. Most screens still render mock data defined inline; the **registration flow is wired to the real backend** (see Data layer below) and is the app's current initial route.
+
+## Standing habits
+- **Update `docs/development.md`** (session log) and the relevant checklist in `docs/backend-dev.md`/`docs/frontend-dev.md` at the end of any nontrivial chunk of work — not just when asked.
+- **Wire frontend to backend at the end of every phase**, not batched into a separate later task — see `implemention.md`'s per-phase "Frontend wiring" steps.
 
 ## Commands
 
@@ -30,6 +34,15 @@ iOS additionally requires, once per native-dependency change:
 cd ios && bundle exec pod install && cd ..
 ```
 
+Backend commands run from `StudyMatch/` as well (Docker Desktop must be running):
+```sh
+npx supabase start           # boot local Postgres/Auth/Realtime/Storage/Studio
+npx supabase status          # show local API URL + anon key; Studio at STUDIO_URL
+npx supabase migration up    # apply new migrations in supabase/migrations/
+npx supabase db reset        # nuke local DB and replay ALL migrations from scratch (verification step)
+npx supabase stop            # stop the local stack
+```
+
 **Windows gotcha:** deeply nested repo paths can exceed the 260-character `MAX_PATH` limit during the Android CMake/ninja build for autolinked native modules (e.g. `react-native-gesture-handler`), producing `ninja: error: ... Filename longer than 260 characters`. Fix by enabling Windows long-path support (`HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled = 1`, requires reboot) or cloning to a short path (e.g. `C:\dev\SD`).
 
 ## Architecture
@@ -48,22 +61,31 @@ Navigation param types are centralized in [`src/types/index.ts`](StudyMatch/src/
 - On swipe completion, `position` is reset to `{0,0}` in a `useEffect` keyed on `deckIndex`, **after** the state update — not synchronously in the completion callback. Resetting it before the index advances causes the just-swiped (old) card to flash back at center for one frame.
 - The deck advances through a local mock `PROFILES` array; there's no pagination/fetch logic yet.
 
-### Screens are currently self-contained mock UIs
-Every file in `src/screens/` defines its own mock data constants and renders directly from them — there is no shared data layer, context, or store yet. When wiring real data (Supabase), replace the mock constants in place and keep the existing component structure, animations, and theme usage intact rather than rewriting screens from scratch.
+### Screens are mostly still self-contained mock UIs
+Most files in `src/screens/` define their own mock data constants and render directly from them — there is no shared store beyond the data layer below. When wiring real data (Supabase), replace the mock constants in place and keep the existing component structure, animations, and theme usage intact rather than rewriting screens from scratch. The registration screens (`RegisterVerificationScreen.tsx`, `RegisterFinalScreen.tsx`) are the first to be wired — use them as the reference pattern for wiring the rest.
+
+### Data layer: Supabase client + camelCase↔snake_case mapping
+- [`src/lib/supabase.ts`](StudyMatch/src/lib/supabase.ts) — the one Supabase client singleton, configured for React Native (`react-native-url-polyfill`, AsyncStorage session persistence, `detectSessionInUrl: false`). Currently points at the **local** Docker stack's URL/anon key (shared non-secret local-dev defaults) — import this, never call `createClient` again elsewhere.
+- [`src/data/mappers.ts`](StudyMatch/src/data/mappers.ts) — the *only* sanctioned crossing point between Supabase's snake_case rows and the frontend's camelCase interfaces in `src/types/index.ts` (`mapUserFromAPI`, `registrationToProfileUpdate`). Never read/write a Supabase row's fields directly in a screen — add a mapper function here instead. A raw 1:1 field assumption (e.g. reading `row.activeMatchId` off a snake_case row) silently yields `undefined`.
+- Auth: registration signs up via `supabase.auth.signUp({ email, password })` with a **user-entered password** (Step 1 of the flow; min length mirrors `supabase/config.toml`'s `minimum_password_length`). Supabase Auth stores it as a bcrypt hash on `auth.users` — never write a password to `public.users` or anywhere else. The PRD's passwordless OTP/magic-link flow and real email confirmation remain deferred. Backend enforces academic email via a Postgres trigger (`.edu`/`.edu.tr` only) on `auth.users`, not client-side validation — always let that error surface rather than re-validating the domain list in the UI.
 
 ### Filter round-trip pattern
 [`FilterScreen.tsx`](StudyMatch/src/screens/FilterScreen.tsx) and `DiscoveryScreen.tsx` demonstrate the app's pattern for passing state between a tab screen and a root-stack screen without a global store: filters are passed forward via `route.params.current` and returned via `navigation.navigate('MainTabs', { screen: 'Match', params: { filters } })`. Follow this same params-round-trip pattern for other screen-to-screen state handoffs until a real state layer exists.
 
 ### Project-specific subagents
-Four subagents in `.claude/agents/` model the intended division of labor for backend/full-stack work:
-- `studymatch-architect` — coordinates cross-layer work, enforces one shared type contract (`src/types/index.ts`) across frontend and future backend
+Five subagents in `.claude/agents/` model the intended division of labor for backend/full-stack work:
+- `studymatch-architect` — coordinates cross-layer work, enforces one shared type contract (`src/types/index.ts`) across frontend and backend
 - `studymatch-supabase` — schema, RLS, Auth (`.edu` email gate), Realtime config; owns the snake_case DB naming convention
 - `studymatch-frontend` — screen/UI wiring, progressive-disclosure blur, Lock System navigation
 - `studymatch-logic` — trust score algorithm, shadowban view, match-timeout cron job
+- `studymatch-bug-hunter` — read-only QA/security auditor; hunts the camelCase↔snake_case mapping boundary, Realtime listener leaks, Lock System bypasses, and RLS/trust-score race conditions. Reports findings + proposed refactors, doesn't implement features.
 
-Note the naming split these agents rely on: `src/types/index.ts` interfaces are **camelCase**; any future Supabase schema is **snake_case** by convention — a mapping layer is required at the data-access boundary, not a 1:1 field-name assumption.
+Note the naming split these agents rely on: `src/types/index.ts` interfaces are **camelCase**; the Supabase schema (`StudyMatch/supabase/migrations/`) is **snake_case** by convention — the mapping layer at `src/data/mappers.ts` is required at the data-access boundary, not a 1:1 field-name assumption.
 
 ## Reference docs
 - [docs/studymatch_full_architecture.md](docs/studymatch_full_architecture.md) — full PRD: matching rules, Lock System, trust score/badge point values, moderation tiers, DB schema outline
+- [implemention.md](implemention.md) — the phased backend build-out plan (migrations + per-phase frontend wiring); check this for current progress before assuming a table/policy exists
 - [docs/development.md](docs/development.md) — session-by-session log of what's actually been built
+- [docs/backend-dev.md](docs/backend-dev.md) — backend checklist (what's actually deployed vs. still planned)
+- [docs/integration.md](docs/integration.md) — data-mapping and query/Realtime patterns for the frontend↔backend boundary
 - [docs/HOW_TO_RUN.md](docs/HOW_TO_RUN.md) — detailed Android emulator setup walkthrough

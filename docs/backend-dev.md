@@ -2,7 +2,7 @@
 
 This guide covers backend development (Supabase, PostgreSQL, Edge Functions) for StudyMatch. Designed primarily for the [studymatch-supabase](./../.claude/agents/studymatch-supabase.md) and [studymatch-logic](./../.claude/agents/studymatch-logic.md) subagents.
 
-> **Status**: No backend code exists yet. The following sections describe the planned structure and serve as placeholders for implementation.
+> **Status**: In progress — see [development.md](development.md) Session 3 and [implemention.md](../implemention.md) for the phased build-out. Local Supabase stack is running (`StudyMatch/supabase/`); Phase 1 (`users` table, `.edu` gate, RLS) is implemented and verified. Sections below describe the full planned structure; items already built are marked accordingly.
 
 ---
 
@@ -299,15 +299,18 @@ export default async (req: Request) => {
 
 ## Development Checklist
 
-- [ ] Supabase project created and database configured
-- [ ] Database schema deployed with RLS enabled on all tables
-- [ ] `.edu` auth gate trigger/hook deployed and tested
-- [ ] Realtime publication configured on `matches` table
-- [ ] Trust-score function tested (apply delta without double-counts)
-- [ ] Shadowban view created and accessible
-- [ ] Match-timeout cron job deployed and tested
-- [ ] Edge Functions deployed and tested in isolation
-- [ ] Data mapping layer documented (frontend consumes snake_case → maps to camelCase)
+- [x] Supabase project created and database configured — local CLI stack (`StudyMatch/supabase/`), hosted project linking deferred to Phase 6
+- [x] `public.users` table created with RLS enabled — Phase 1
+- [x] `matches`/`messages`/`study_dates` tables created with RLS + grants — Phase 2 (`create_matches_messages_study_dates.sql`, `matches_messages_study_dates_rls.sql`); `users.active_match_id` FK closed; verified at SQL and REST level (see development.md Session 4)
+- [x] `.edu` auth gate trigger deployed and tested — `edu_email_gate.sql`, verified against GoTrue v2.192.0
+- [ ] Lock System single-active-match trigger on `matches` — Phase 3
+- [ ] Realtime publication configured on `matches` table — Phase 4
+- [ ] Trust-score function tested (apply delta without double-counts) — Phase 5
+- [ ] Shadowban view created and accessible — Phase 4
+- [ ] Match-timeout cron job deployed and tested — Phase 5
+- [ ] Edge Functions deployed and tested in isolation — not yet started
+- [x] Data mapping layer in place (`src/data/mappers.ts`: users, matches, messages, study_dates) — Chat + Study Date Planner wired; remaining screens still on mock data
+- [ ] Real email verification (Supabase Auth OTP/magic-link) — Phase 1 currently uses a mock `verification_code` column (`'000000'`) as a placeholder, see `implemention.md`
 
 ---
 

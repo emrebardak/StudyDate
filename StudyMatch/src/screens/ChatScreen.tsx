@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,50 +9,38 @@ import {
   KeyboardAvoidingView,
   Platform,
   Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography, Shadow } from '../theme';
+import { supabase } from '../lib/supabase';
+import { mapMessageFromAPI } from '../data/mappers';
+import type { Message } from '../types';
 
 const { width } = Dimensions.get('window');
 
-// ── Mock Data ──────────────────────────────────────────────────────────────────
-const MOCK_MESSAGES = [
-  {
-    id: '1',
-    senderId: 'other',
-    content:
-      'Hey! Just went over the quantum mechanics chapter. That wave function problem is actually pretty elegant once you see it.',
-    time: '14:05',
-  },
-  {
-    id: '2',
-    senderId: 'other',
-    content:
-      'Have you started on the problem set yet? I think section 3 is going to hurt.',
-    time: '14:07',
-  },
-  {
-    id: '3',
-    senderId: 'me',
-    content:
-      "Not yet, but I'm free Thursday evening if you want to tackle it together. Library 3rd floor?",
-    time: '14:12',
-  },
-];
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  return isNaN(d.getTime())
+    ? ''
+    : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
 // ── Message Bubble ─────────────────────────────────────────────────────────────
 function MessageBubble({
   message,
+  currentUserId,
 }: {
-  message: (typeof MOCK_MESSAGES)[0];
+  message: Message;
+  currentUserId: string | null;
 }) {
-  const isMe = message.senderId === 'me';
+  const isMe = message.senderId === currentUserId;
   return (
     <View style={[styles.bubbleRow, isMe && styles.bubbleRowMe]}>
       <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleOther]}>
         <Text style={styles.bubbleText}>{message.content}</Text>
         <View style={[styles.bubbleMeta, isMe && styles.bubbleMetaMe]}>
-          <Text style={styles.bubbleTime}>{message.time}</Text>
+          <Text style={styles.bubbleTime}>{formatTime(message.createdAt)}</Text>
           {isMe && (
             <Ionicons
               name="checkmark-done"
@@ -92,27 +80,103 @@ function RevealCard() {
 }
 
 // ── Main Screen ────────────────────────────────────────────────────────────────
-export default function ChatScreen({ navigation }: { navigation: any }) {
+export default function ChatScreen({
+  navigation,
+  route,
+}: {
+  navigation: any;
+  route?: any;
+}) {
   const [inputText, setInputText] = useState('');
-  const [messages, setMessages] = useState(MOCK_MESSAGES);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [matchId, setMatchId] = useState<string | null>(
+    route?.params?.matchId ?? null,
+  );
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [sending, setSending] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
-  function handleSend() {
-    if (!inputText.trim()) return;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: String(Date.now()),
-        senderId: 'me',
-        content: inputText.trim(),
-        time: new Date().toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-      },
-    ]);
-    setInputText('');
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+  // Resolve session user + match, then load the message history. When opened from
+  // the Chats tab (no matchId param), fall back to the user's single active match —
+  // the Lock System guarantees there is at most one (PRD §5).
+  const loadChat = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      const userId = auth?.user?.id;
+      if (!userId) {
+        setError('Not signed in.');
+        return;
+      }
+      setCurrentUserId(userId);
+
+      let resolvedMatchId = route?.params?.matchId ?? null;
+      if (!resolvedMatchId) {
+        const { data: match, error: matchError } = await supabase
+          .from('matches')
+          .select('id')
+          .eq('status', 'active')
+          .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
+          .maybeSingle();
+        if (matchError) {
+          setError(matchError.message);
+          return;
+        }
+        resolvedMatchId = match?.id ?? null;
+      }
+      setMatchId(resolvedMatchId);
+      if (!resolvedMatchId) {
+        // No active match — the empty state below explains it.
+        setMessages([]);
+        return;
+      }
+
+      const { data: rows, error: msgError } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('match_id', resolvedMatchId)
+        .order('created_at', { ascending: true });
+      if (msgError) {
+        setError(msgError.message);
+        return;
+      }
+      setMessages((rows ?? []).map(mapMessageFromAPI));
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to load chat.');
+    } finally {
+      setLoading(false);
+    }
+  }, [route?.params?.matchId]);
+
+  useEffect(() => {
+    loadChat();
+  }, [loadChat]);
+
+  async function handleSend() {
+    const content = inputText.trim();
+    if (!content || !matchId || !currentUserId || sending) return;
+    setSending(true);
+    try {
+      const { data: row, error: insertError } = await supabase
+        .from('messages')
+        .insert({ match_id: matchId, sender_id: currentUserId, content })
+        .select()
+        .single();
+      if (insertError) {
+        setError(insertError.message);
+        return;
+      }
+      setMessages((prev) => [...prev, mapMessageFromAPI(row)]);
+      setInputText('');
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to send message.');
+    } finally {
+      setSending(false);
+    }
   }
 
   return (
@@ -172,13 +236,37 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
             </Text>
           </View>
 
+          {/* Loading / error / empty states */}
+          {loading && (
+            <View style={styles.stateWrap}>
+              <ActivityIndicator color={Colors.primary} />
+            </View>
+          )}
+          {!loading && error !== '' && (
+            <TouchableOpacity style={styles.stateWrap} onPress={loadChat}>
+              <Text style={styles.stateText}>{error}</Text>
+              <Text style={styles.stateRetry}>Tap to retry</Text>
+            </TouchableOpacity>
+          )}
+          {!loading && !error && !matchId && (
+            <View style={styles.stateWrap}>
+              <Text style={styles.stateText}>
+                No active match yet. Find a study partner in Discovery first.
+              </Text>
+            </View>
+          )}
+
           {/* Messages */}
           {messages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} />
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              currentUserId={currentUserId}
+            />
           ))}
 
           {/* Reveal card */}
-          <RevealCard />
+          {!loading && !error && matchId != null && <RevealCard />}
         </ScrollView>
 
         {/* ── Input Bar ── */}
@@ -196,7 +284,11 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
             multiline
           />
 
-          <TouchableOpacity style={styles.sendBtn} onPress={handleSend}>
+          <TouchableOpacity
+            style={[styles.sendBtn, sending && styles.sendBtnDisabled]}
+            onPress={handleSend}
+            disabled={sending}
+          >
             <Ionicons name="arrow-up" size={18} color={Colors.textOnYellow} />
           </TouchableOpacity>
         </View>
@@ -264,6 +356,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.base,
     paddingTop: Spacing.base,
     paddingBottom: Spacing.xl,
+  },
+
+  // Loading / error / empty states
+  stateWrap: {
+    alignItems: 'center',
+    paddingVertical: Spacing.xl,
+    gap: Spacing.sm,
+  },
+  stateText: {
+    fontSize: Typography.size.sm,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  stateRetry: {
+    fontSize: Typography.size.sm,
+    fontWeight: Typography.weight.semibold,
+    color: Colors.primary,
   },
 
   // System banner
@@ -427,5 +537,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  sendBtnDisabled: {
+    opacity: 0.6,
   },
 });

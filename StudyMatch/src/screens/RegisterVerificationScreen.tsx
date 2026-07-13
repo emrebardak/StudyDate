@@ -7,29 +7,62 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography } from '../theme';
+import { supabase } from '../lib/supabase';
 
-const ACADEMIC_DOMAINS = ['.edu', '.edu.tr', '.ac.uk'];
-
-function isAcademicEmail(email: string): boolean {
-  const trimmed = email.trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return false;
-  return ACADEMIC_DOMAINS.some((domain) => trimmed.endsWith(domain));
+// Light "looks like an email" check only. The real academic-domain rule (.edu/.edu.tr)
+// is enforced by the backend `.edu` gate trigger — we surface ITS error rather than
+// duplicating the domain list on the client.
+function looksLikeEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
+
+// Must match the backend policy (supabase/config.toml: minimum_password_length = 6) so
+// the client-side check never contradicts what Auth would accept.
+const MIN_PASSWORD_LENGTH = 6;
 
 export default function RegisterVerificationScreen({ navigation }: { navigation: any }) {
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  function handleContinue() {
-    if (!isAcademicEmail(email)) {
-      setError('Please use a valid university email (.edu, .edu.tr, .ac.uk).');
+  async function handleContinue() {
+    const trimmed = email.trim();
+    if (!looksLikeEmail(trimmed)) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
       return;
     }
     setError('');
-    navigation.navigate('RegisterProfile', { data: { email: email.trim() } });
+    setLoading(true);
+    try {
+      // Creates the auth.users row → fires the backend `.edu` gate. A non-academic email
+      // comes back as an error here; a valid one returns an immediate session (local
+      // config has email confirmations disabled) plus an auto-created public.users row.
+      // The password is stored by Supabase Auth itself (bcrypt hash on auth.users) —
+      // it is NEVER written to public.users or anywhere else in plaintext.
+      const { error: signUpError } = await supabase.auth.signUp({
+        email: trimmed,
+        password,
+      });
+      if (signUpError) {
+        setError(signUpError.message);
+        return;
+      }
+      navigation.navigate('RegisterProfile', { data: { email: trimmed } });
+    } catch (e: any) {
+      setError(e?.message ?? 'Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -88,21 +121,59 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
               />
             </View>
 
+            <Text style={[styles.fieldLabel, styles.fieldLabelSpaced]}>
+              PASSWORD
+            </Text>
+
+            <View style={[styles.inputRow, !!error && styles.inputRowError]}>
+              <Ionicons name="lock-closed-outline" size={18} color={Colors.textSecondary} />
+              <TextInput
+                style={styles.input}
+                placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
+                placeholderTextColor={Colors.textMuted}
+                value={password}
+                onChangeText={(v) => {
+                  setPassword(v);
+                  if (error) setError('');
+                }}
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <TouchableOpacity
+                onPress={() => setShowPassword((s) => !s)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons
+                  name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                  size={18}
+                  color={Colors.textSecondary}
+                />
+              </TouchableOpacity>
+            </View>
+
             {error ? (
               <Text style={styles.errorText}>{error}</Text>
             ) : (
               <Text style={styles.helperText}>
-                We'll send a verification link to this address.
+                Your password is stored securely. You'll use it to sign back in.
               </Text>
             )}
 
             <TouchableOpacity
-              style={styles.continueBtn}
+              style={[styles.continueBtn, loading && styles.continueBtnDisabled]}
               activeOpacity={0.85}
               onPress={handleContinue}
+              disabled={loading}
             >
-              <Text style={styles.continueBtnText}>Continue</Text>
-              <Ionicons name="arrow-forward" size={20} color={Colors.textOnYellow} />
+              {loading ? (
+                <ActivityIndicator color={Colors.textOnYellow} />
+              ) : (
+                <>
+                  <Text style={styles.continueBtnText}>Continue</Text>
+                  <Ionicons name="arrow-forward" size={20} color={Colors.textOnYellow} />
+                </>
+              )}
             </TouchableOpacity>
           </View>
 
@@ -209,6 +280,9 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     marginBottom: Spacing.md,
   },
+  fieldLabelSpaced: {
+    marginTop: Spacing.lg,
+  },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -250,6 +324,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     borderRadius: Radius.md,
     paddingVertical: Spacing.base,
+  },
+  continueBtnDisabled: {
+    opacity: 0.6,
   },
   continueBtnText: {
     fontSize: Typography.size.lg,

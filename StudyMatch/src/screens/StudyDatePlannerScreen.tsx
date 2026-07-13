@@ -7,9 +7,11 @@ import {
   StyleSheet,
   ScrollView,
   Image,
+  ActivityIndicator,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography } from '../theme';
+import { supabase } from '../lib/supabase';
 
 const MAP_IMAGE =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuCKZt0_dZBSxx8Wv0IF1C9jHonv7yU2O-QC0Wcz9IFvmQViUu2XQOvrxmmIoYNnX9i2XaVxpwRB7_8E4vXtSYAv3Cb-13PwrZnSBhUdVkjRKB7zMpBEmzlynqnQw10vQtH8nZ8S4WSDa039NrEoRUrhA85_8y9MN6YE9aasWxw5VOcaC_-FM-wAKN4tNiKB1iANuJY19kRpSZhLYgNyAg5fHM_aASZPigKWrqw_phdu7DA5SGvDqOZ9_esBOV3TxpYMJ7h7nrgSfaw';
@@ -65,8 +67,10 @@ function TimeSpinner({ value, onIncrement, onDecrement }: TimeSpinnerProps) {
 
 export default function StudyDatePlannerScreen({
   navigation,
+  route,
 }: {
   navigation: any;
+  route?: any;
 }) {
   const now = new Date();
   const [viewYear, setViewYear] = useState(now.getFullYear());
@@ -78,6 +82,8 @@ export default function StudyDatePlannerScreen({
   const [sessionNotes, setSessionNotes] = useState('');
   const [hours, setHours] = useState(14);
   const [minutes, setMinutes] = useState(30);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   const monthLabel = useMemo(
     () =>
@@ -133,6 +139,64 @@ export default function StudyDatePlannerScreen({
   function handleCancel() {
     if (navigation?.canGoBack?.()) {
       navigation.goBack();
+    }
+  }
+
+  async function handleCreate() {
+    if (saving) return;
+    setError('');
+    setSaving(true);
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      const userId = auth?.user?.id;
+      if (!userId) {
+        setError('Not signed in.');
+        return;
+      }
+
+      // Match comes from the Chat route param when opened as a modal; when opened
+      // from the Planner tab, fall back to the user's single active match (Lock
+      // System guarantees at most one — PRD §5).
+      let matchId: string | null = route?.params?.matchId ?? null;
+      if (!matchId) {
+        const { data: match, error: matchError } = await supabase
+          .from('matches')
+          .select('id')
+          .eq('status', 'active')
+          .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
+          .maybeSingle();
+        if (matchError) {
+          setError(matchError.message);
+          return;
+        }
+        matchId = match?.id ?? null;
+      }
+      if (!matchId) {
+        setError('No active match. Find a study partner in Discovery first.');
+        return;
+      }
+
+      const scheduled = new Date(viewYear, viewMonth, selectedDay, hours, minutes);
+      const focusSubject = [selectedTags.join(', '), sessionNotes.trim()]
+        .filter(Boolean)
+        .join(' — ');
+
+      const { error: insertError } = await supabase.from('study_dates').insert({
+        match_id: matchId,
+        proposed_by: userId,
+        location: selectedLocation,
+        scheduled_time: scheduled.toISOString(),
+        focus_subject: focusSubject || null,
+      });
+      if (insertError) {
+        setError(insertError.message);
+        return;
+      }
+      handleCancel();
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to create the study date.');
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -292,13 +356,24 @@ export default function StudyDatePlannerScreen({
           </View>
         </View>
 
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
         <View style={styles.actionsRow}>
           <TouchableOpacity style={styles.cancelBtn} onPress={handleCancel}>
             <Text style={styles.cancelBtnText}>Cancel</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.createBtn}>
-            <Ionicons name="calendar-outline" size={18} color={Colors.background} />
-            <Text style={styles.createBtnText}>Create Date</Text>
+          <TouchableOpacity
+            style={[styles.createBtn, saving && styles.createBtnDisabled]}
+            onPress={handleCreate}
+            disabled={saving}
+          >
+            {saving ? (
+              <ActivityIndicator color={Colors.background} size="small" />
+            ) : (
+              <>
+                <Ionicons name="calendar-outline" size={18} color={Colors.background} />
+                <Text style={styles.createBtnText}>Create Date</Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -641,5 +716,14 @@ const styles = StyleSheet.create({
     fontSize: Typography.size.base,
     fontWeight: Typography.weight.bold,
     color: Colors.background,
+  },
+  createBtnDisabled: {
+    opacity: 0.6,
+  },
+  errorText: {
+    fontSize: Typography.size.sm,
+    color: Colors.danger,
+    lineHeight: 20,
+    marginTop: Spacing.sm,
   },
 });
