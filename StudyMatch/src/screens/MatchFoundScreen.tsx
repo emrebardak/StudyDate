@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   ScrollView,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { supabase } from '../lib/supabase';
 
 // ── Colors ────────────────────────────────────────────────────────────────────
 const BG           = '#000814'; // Ink Black
@@ -25,6 +26,52 @@ interface Props {
 }
 
 export default function MatchFoundScreen({ navigation }: Props) {
+  const [partnerName, setPartnerName] = useState('');
+
+  // Names aren't part of the photo-blur progressive disclosure (only photos stay
+  // hidden until mutual reveal) — users_select_matched RLS already lets a matched
+  // participant read their partner's row. This screen has no matchId route param,
+  // so it resolves the partner the same way DashboardScreen's upcoming-session card
+  // does: via the current user's own active_match_id (the Lock System guarantees
+  // there's at most one).
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPartnerName() {
+      const { data: auth } = await supabase.auth.getUser();
+      const userId = auth?.user?.id;
+      if (!userId) return;
+
+      const { data: ownRow } = await supabase
+        .from('users')
+        .select('active_match_id')
+        .eq('id', userId)
+        .single();
+      const activeMatchId = ownRow?.active_match_id;
+      if (!activeMatchId) return;
+
+      const { data: matchRow } = await supabase
+        .from('matches')
+        .select('user1_id, user2_id')
+        .eq('id', activeMatchId)
+        .single();
+      if (!matchRow) return;
+      const partnerId = matchRow.user1_id === userId ? matchRow.user2_id : matchRow.user1_id;
+
+      const { data: partnerRow } = await supabase
+        .from('users')
+        .select('name')
+        .eq('id', partnerId)
+        .single();
+      if (!cancelled) {
+        setPartnerName(partnerRow?.name ?? '');
+      }
+    }
+    loadPartnerName();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
@@ -66,7 +113,7 @@ export default function MatchFoundScreen({ navigation }: Props) {
         {/* ── Description ─────────────────────────────────────────────────── */}
         <Text style={styles.description}>
           {'You and '}
-          <Text style={styles.partnerName}>Dr. Eleanor Vance</Text>
+          <Text style={styles.partnerName}>{partnerName || 'your study partner'}</Text>
           {' are ready to master '}
           <Text style={styles.subjectName}>Advanced Quantum Mechanics</Text>
           {' together.'}

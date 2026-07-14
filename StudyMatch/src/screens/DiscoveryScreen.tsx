@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -6,11 +6,15 @@ import {
   StyleSheet,
   Dimensions,
   Animated,
+  ActivityIndicator,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { useFocusEffect } from '@react-navigation/native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography } from '../theme';
-import type { DiscoveryFilters } from '../types';
+import type { DiscoveryFilters, User } from '../types';
+import { supabase } from '../lib/supabase';
+import { mapUserFromAPI } from '../data/mappers';
 
 const { width, height } = Dimensions.get('window');
 
@@ -22,57 +26,7 @@ const SWIPE_THRESHOLD = width * 0.45;
 const SWIPE_OUT_DISTANCE = width * 1.5;
 const SWIPE_OUT_DURATION = 240;
 
-// ── Mock Deck ─────────────────────────────────────────────────────────────────
-interface Profile {
-  name: string;
-  age: number;
-  field: string;
-  tags: { label: string; variant: 'dark' | 'gold' }[];
-  bio: string;
-}
-
-const PROFILES: Profile[] = [
-  {
-    name: 'Elena Rostova',
-    age: 23,
-    field: 'Biomedical Engineering',
-    tags: [
-      { label: 'MIT',             variant: 'dark' },
-      { label: 'RESEARCH FELLOW', variant: 'gold' },
-    ],
-    bio: '"Chasing answers at the intersection of biology and technology. Looking for a focused partner for research methodology and thesis prep."',
-  },
-  {
-    name: 'Marcus Torres',
-    age: 26,
-    field: 'Theoretical Physics',
-    tags: [
-      { label: 'STANFORD',      variant: 'dark' },
-      { label: 'PHD CANDIDATE', variant: 'gold' },
-    ],
-    bio: '"Quantum field theory by day, espresso by night. Need a partner who can survive a 3-hour problem-set marathon without checking their phone."',
-  },
-  {
-    name: 'Aisha Khan',
-    age: 22,
-    field: 'Computer Science',
-    tags: [
-      { label: 'HARVARD',  variant: 'dark' },
-      { label: 'SENIOR',   variant: 'gold' },
-    ],
-    bio: '"Grinding LeetCode and compiler theory before finals. Silent library sessions preferred — headphones on, world off."',
-  },
-  {
-    name: 'Leo Fischer',
-    age: 24,
-    field: 'Organic Chemistry',
-    tags: [
-      { label: 'BERKELEY',    variant: 'dark' },
-      { label: 'LAB ASSISTANT', variant: 'gold' },
-    ],
-    bio: '"Reaction mechanisms are my love language. Looking for a study buddy for the midterm gauntlet — flashcards and coffee provided."',
-  },
-];
+const CANDIDATE_BATCH_SIZE = 20;
 
 // ── Empty State ───────────────────────────────────────────────────────────────
 function EmptyState({ onRefresh }: { onRefresh: () => void }) {
@@ -93,14 +47,61 @@ function EmptyState({ onRefresh }: { onRefresh: () => void }) {
   );
 }
 
+// ── Loading / Error / Locked States ─────────────────────────────────────────────
+function LoadingState() {
+  return (
+    <View style={styles.emptyContainer}>
+      <ActivityIndicator color={Colors.primary} size="large" />
+    </View>
+  );
+}
+
+function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <View style={styles.emptyContainer}>
+      <View style={styles.emptyIconWrap}>
+        <Ionicons name="warning-outline" size={52} color={Colors.textMuted} />
+      </View>
+      <Text style={styles.emptyTitle}>Something went wrong</Text>
+      <Text style={styles.emptySubtitle}>{message}</Text>
+      <TouchableOpacity style={styles.refreshBtn} onPress={onRetry} activeOpacity={0.8}>
+        <Ionicons name="refresh-outline" size={16} color={Colors.primary} />
+        <Text style={styles.refreshBtnText}>Retry</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+// Lock System (PRD §5): shown instead of the swipe deck whenever this user
+// already has an active match — completes the "you're already in a study date"
+// UI state that Phase 3 deferred until Discovery had a real candidate pool.
+function LockedState({ onGoToChat }: { onGoToChat: () => void }) {
+  return (
+    <View style={styles.emptyContainer}>
+      <View style={styles.emptyIconWrap}>
+        <Ionicons name="lock-closed-outline" size={52} color={Colors.primary} />
+      </View>
+      <Text style={styles.emptyTitle}>You're already in a study date</Text>
+      <Text style={styles.emptySubtitle}>
+        Finish up or end your current match before finding a new partner.
+      </Text>
+      <TouchableOpacity style={styles.refreshBtn} onPress={onGoToChat} activeOpacity={0.8}>
+        <Ionicons name="chatbubble-outline" size={16} color={Colors.primary} />
+        <Text style={styles.refreshBtnText}>Go to Chat</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 // ── Card Face (static content) ────────────────────────────────────────────────
-function CardFace({ profile }: { profile: Profile }) {
+function CardFace({ profile }: { profile: User }) {
   return (
     <>
       {/* ── Photo area ── */}
       <View style={styles.photoArea}>
 
-        {/* Placeholder fill */}
+        {/* Placeholder fill — real photos stay blurred until mutual reveal (PRD §5);
+            progressive-disclosure photo wiring is a later phase, not this one. */}
         <View style={styles.photoPlaceholder}>
           <Ionicons name="person" size={72} color={Colors.surfaceHigh} />
         </View>
@@ -110,33 +111,35 @@ function CardFace({ profile }: { profile: Profile }) {
           <Ionicons name="checkmark-circle" size={24} color={Colors.primary} />
         </View>
 
-        {/* Gradient-like overlay: name + field + tags */}
+        {/* Gradient-like overlay: name + academic card fields (PRD §4 — University /
+            Department / Year, no photo, no age) */}
         <View style={styles.photoOverlay}>
           <View style={styles.tagsRow}>
-            {profile.tags.map((tag) =>
-              tag.variant === 'dark' ? (
-                <View key={tag.label} style={styles.tagDark}>
-                  <Text style={styles.tagDarkText}>{tag.label}</Text>
-                </View>
-              ) : (
-                <View key={tag.label} style={styles.tagGold}>
-                  <Text style={styles.tagGoldText}>{tag.label}</Text>
-                </View>
-              ),
+            {!!profile.university && (
+              <View style={styles.tagDark}>
+                <Text style={styles.tagDarkText}>{profile.university.toUpperCase()}</Text>
+              </View>
+            )}
+            {!!profile.year && (
+              <View style={styles.tagGold}>
+                <Text style={styles.tagGoldText}>{profile.year.toUpperCase()}</Text>
+              </View>
             )}
           </View>
-          <Text style={styles.profileName}>
-            {profile.name}, {profile.age}
-          </Text>
-          <Text style={styles.profileField}>{profile.field}</Text>
+          <Text style={styles.profileName}>{profile.name || 'Anonymous Scholar'}</Text>
+          <Text style={styles.profileField}>{profile.department || 'Undeclared Department'}</Text>
         </View>
 
       </View>
 
-      {/* ── Bio section ── */}
+      {/* ── Bio section — today's focus goal (PRD §3 "Today's Goal") ── */}
       <View style={styles.bioSection}>
         <View style={styles.bioAccentBar} />
-        <Text style={styles.bioText}>{profile.bio}</Text>
+        <Text style={styles.bioText}>
+          {profile.currentGoalText
+            ? `"${profile.currentGoalText}"`
+            : 'No current study goal set.'}
+        </Text>
       </View>
     </>
   );
@@ -148,9 +151,31 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
   const [activeFilters, setActiveFilters] = useState<DiscoveryFilters | undefined>(
     route?.params?.filters,
   );
+  const [candidates, setCandidates] = useState<User[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [locked, setLocked] = useState(false);
+  const [swipeErrorBanner, setSwipeErrorBanner] = useState<string | null>(null);
 
   const position = useRef(new Animated.ValueXY()).current;
   const isAnimating = useRef(false);
+  const swipeErrorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Non-blocking toast for recordSwipe() failures — the card has already
+  // animated off-screen by the time an insert failure resolves, so a modal
+  // Alert would be jarring; this banner self-dismisses instead.
+  const showSwipeErrorBanner = useCallback((message: string) => {
+    if (swipeErrorTimer.current) clearTimeout(swipeErrorTimer.current);
+    setSwipeErrorBanner(message);
+    swipeErrorTimer.current = setTimeout(() => setSwipeErrorBanner(null), 3000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (swipeErrorTimer.current) clearTimeout(swipeErrorTimer.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (route?.params?.filters) {
@@ -165,6 +190,110 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
     position.setValue({ x: 0, y: 0 });
     isAnimating.current = false;
   }, [deckIndex]);
+
+  // Loads: (1) whether this user is currently locked (Lock System — if so, skip
+  // the deck entirely and show LockedState), (2) the real candidate pool from
+  // discoverable_users (shadowban-filtered, Phase 4), excluding self and anyone
+  // already locked with someone else.
+  const loadDiscovery = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      const userId = auth?.user?.id;
+      if (!userId) {
+        setError('Not signed in.');
+        return;
+      }
+      setCurrentUserId(userId);
+
+      const { data: ownRow, error: ownError } = await supabase
+        .from('users')
+        .select('active_match_id')
+        .eq('id', userId)
+        .single();
+      if (ownError) {
+        setError(ownError.message);
+        return;
+      }
+      if (ownRow?.active_match_id) {
+        setLocked(true);
+        return;
+      }
+      setLocked(false);
+
+      const { data: rows, error: candidatesError } = await supabase
+        .from('discoverable_users')
+        .select('*')
+        .neq('id', userId)
+        .is('active_match_id', null)
+        .limit(CANDIDATE_BATCH_SIZE);
+      if (candidatesError) {
+        setError(candidatesError.message);
+        return;
+      }
+      setCandidates((rows ?? []).map(mapUserFromAPI));
+      setDeckIndex(0);
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to load Discovery.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadDiscovery();
+  }, [loadDiscovery]);
+
+  // Refresh every time this tab regains focus — e.g. coming back from Chat after
+  // an End Match unlock, so the deck doesn't stay stuck on stale data.
+  useFocusEffect(
+    useCallback(() => {
+      loadDiscovery();
+    }, [loadDiscovery]),
+  );
+
+  // Lock System, live: subscribe to the matches rows this user participates in.
+  // A single handler drives BOTH the initiator (whose own swipe caused the
+  // insert) and the target (who did nothing) — deliberately not navigating
+  // synchronously after the insert's own REST response, so there is exactly one
+  // lock-transition code path for both sides, matching what Realtime is for.
+  // (matches_select_participant RLS — auth.uid() IN (user1_id, user2_id) —
+  // means this channel only ever receives rows this user is actually part of;
+  // Realtime does not bypass RLS.)
+  useEffect(() => {
+    if (!currentUserId) return;
+
+    function handleMatchChange(payload: any) {
+      const row = payload.new;
+      if (!row) return;
+      if (row.status === 'active') {
+        setLocked(true);
+        navigation.navigate('MainTabs', { screen: 'Chats' });
+      } else {
+        setLocked(false);
+        loadDiscovery();
+      }
+    }
+
+    const channel = supabase
+      .channel(`discovery-lock-${currentUserId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'matches', filter: `user1_id=eq.${currentUserId}` },
+        handleMatchChange,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'matches', filter: `user2_id=eq.${currentUserId}` },
+        handleMatchChange,
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentUserId, navigation, loadDiscovery]);
 
   function onSwipeComplete() {
     setDeckIndex((i) => i + 1);
@@ -191,6 +320,46 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
     }).start();
   }
 
+  // Persists a swipe decision so discoverable_users' NOT EXISTS clause (Gap 2
+  // hardening) excludes this candidate from future loads for this user. Also
+  // the ONLY way a match can now form: the backend's form_match_on_mutual_swipe()
+  // trigger on public.swipes creates the matches row itself, exclusively when
+  // both users have a 'right' swipe on each other — real double opt-in (PRD §4).
+  // Match INSERTs are no longer performed by the client at all; a right swipe
+  // just records the swipe, same as a left swipe, and the Realtime subscription
+  // above is what tells this screen a match actually formed (which may happen
+  // immediately if this swipe completed the pair, or later if the other side
+  // swipes right afterward).
+  //
+  // Postgres unique_violation (23505 — re-swiping an already-decided candidate)
+  // stays silent (console.warn only): expected/harmless, since the view already
+  // excludes already-swiped candidates from what Discovery ever fetches, so this
+  // can only happen from a stale local deck. Any OTHER failure — including a
+  // null/stale currentUserId (expired session) — always means something is
+  // actually wrong, so it's surfaced via a non-blocking banner instead of being
+  // swallowed; a null currentUserId additionally re-runs loadDiscovery() to
+  // re-resolve auth state and surface the real "Not signed in" ErrorState.
+  async function recordSwipe(candidate: User | undefined, direction: 'left' | 'right') {
+    if (!candidate) return;
+    if (!currentUserId) {
+      console.warn('Failed to record swipe: no signed-in user (stale/expired session).');
+      showSwipeErrorBanner("Couldn't save that — please sign in again.");
+      loadDiscovery();
+      return;
+    }
+    const { error: swipeError } = await supabase
+      .from('swipes')
+      .insert({ swiper_id: currentUserId, target_id: candidate.id, direction });
+    if (swipeError) {
+      if (swipeError.code === '23505') {
+        console.warn('Swipe already recorded for this candidate (stale local deck).');
+        return;
+      }
+      console.warn('Failed to record swipe:', swipeError.message);
+      showSwipeErrorBanner("Couldn't save that — check your connection.");
+    }
+  }
+
   const panGesture = useRef(
     Gesture.Pan()
       .runOnJS(true)
@@ -201,9 +370,13 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
       .onEnd((e) => {
         if (isAnimating.current) return;
         if (e.translationX > SWIPE_THRESHOLD) {
+          const candidate = candidates[deckIndex];
           forceSwipe('right');
+          recordSwipe(candidate, 'right');
         } else if (e.translationX < -SWIPE_THRESHOLD) {
+          const candidate = candidates[deckIndex];
           forceSwipe('left');
+          recordSwipe(candidate, 'left');
         } else {
           springBack();
         }
@@ -232,8 +405,119 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
     extrapolate: 'clamp',
   });
 
-  const topProfile = PROFILES[deckIndex];
-  const nextProfile = PROFILES[deckIndex + 1];
+  const topProfile = candidates[deckIndex];
+  const nextProfile = candidates[deckIndex + 1];
+
+  function renderContent() {
+    if (locked) {
+      return (
+        <LockedState
+          onGoToChat={() => navigation.navigate('MainTabs', { screen: 'Chats' })}
+        />
+      );
+    }
+    if (loading) {
+      return <LoadingState />;
+    }
+    if (error) {
+      return <ErrorState message={error} onRetry={loadDiscovery} />;
+    }
+    if (!topProfile) {
+      return <EmptyState onRefresh={loadDiscovery} />;
+    }
+
+    return (
+      <View style={styles.cardContainer}>
+
+        {/* Deck */}
+        <View style={styles.deckWrap}>
+
+          {/* Next card (behind) */}
+          {nextProfile && (
+            <Animated.View
+              style={[
+                styles.swipeCard,
+                styles.deckCard,
+                { transform: [{ scale: nextCardScale }] },
+              ]}
+            >
+              <CardFace profile={nextProfile} />
+            </Animated.View>
+          )}
+
+          {/* Top card (draggable) */}
+          <GestureDetector gesture={panGesture}>
+            <Animated.View
+              style={[
+                styles.swipeCard,
+                styles.deckCard,
+                {
+                  transform: [
+                    { translateX: position.x },
+                    { translateY: position.y },
+                    { rotate },
+                  ],
+                },
+              ]}
+            >
+              <CardFace profile={topProfile} />
+
+              {/* CONNECT stamp — fades in on right drag */}
+              <Animated.View
+                style={[styles.stamp, styles.stampConnect, { opacity: connectOpacity }]}
+              >
+                <Text style={styles.stampConnectText}>CONNECT ✓</Text>
+              </Animated.View>
+
+              {/* PASS stamp — fades in on left drag */}
+              <Animated.View
+                style={[styles.stamp, styles.stampPass, { opacity: passOpacity }]}
+              >
+                <Text style={styles.stampPassText}>PASS ✗</Text>
+              </Animated.View>
+            </Animated.View>
+          </GestureDetector>
+
+        </View>
+
+        {/* Action buttons */}
+        <View style={styles.actionsRow}>
+
+          {/* Pass — X */}
+          <TouchableOpacity
+            style={styles.btnPass}
+            activeOpacity={0.8}
+            onPress={() => {
+              const candidate = candidates[deckIndex];
+              forceSwipe('left');
+              recordSwipe(candidate, 'left');
+            }}
+          >
+            <Ionicons name="close" size={26} color={Colors.textPrimary} />
+          </TouchableOpacity>
+
+          {/* Bookmark */}
+          <TouchableOpacity style={styles.btnBookmark} activeOpacity={0.8}>
+            <Ionicons name="bookmark-outline" size={22} color={Colors.textPrimary} />
+          </TouchableOpacity>
+
+          {/* Like — primary CTA */}
+          <TouchableOpacity
+            style={styles.btnLike}
+            activeOpacity={0.82}
+            onPress={() => {
+              const candidate = candidates[deckIndex];
+              forceSwipe('right');
+              recordSwipe(candidate, 'right');
+            }}
+          >
+            <Ionicons name="heart" size={28} color={Colors.textOnYellow} />
+          </TouchableOpacity>
+
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.root}>
@@ -260,90 +544,14 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
       </View>
 
       {/* ── Content ── */}
-      {topProfile ? (
-        <View style={styles.cardContainer}>
+      {renderContent()}
 
-          {/* Deck */}
-          <View style={styles.deckWrap}>
-
-            {/* Next card (behind) */}
-            {nextProfile && (
-              <Animated.View
-                style={[
-                  styles.swipeCard,
-                  styles.deckCard,
-                  { transform: [{ scale: nextCardScale }] },
-                ]}
-              >
-                <CardFace profile={nextProfile} />
-              </Animated.View>
-            )}
-
-            {/* Top card (draggable) */}
-            <GestureDetector gesture={panGesture}>
-              <Animated.View
-                style={[
-                  styles.swipeCard,
-                  styles.deckCard,
-                  {
-                    transform: [
-                      { translateX: position.x },
-                      { translateY: position.y },
-                      { rotate },
-                    ],
-                  },
-                ]}
-              >
-                <CardFace profile={topProfile} />
-
-                {/* CONNECT stamp — fades in on right drag */}
-                <Animated.View
-                  style={[styles.stamp, styles.stampConnect, { opacity: connectOpacity }]}
-                >
-                  <Text style={styles.stampConnectText}>CONNECT ✓</Text>
-                </Animated.View>
-
-                {/* PASS stamp — fades in on left drag */}
-                <Animated.View
-                  style={[styles.stamp, styles.stampPass, { opacity: passOpacity }]}
-                >
-                  <Text style={styles.stampPassText}>PASS ✗</Text>
-                </Animated.View>
-              </Animated.View>
-            </GestureDetector>
-
-          </View>
-
-          {/* Action buttons */}
-          <View style={styles.actionsRow}>
-
-            {/* Pass — X */}
-            <TouchableOpacity
-              style={styles.btnPass}
-              activeOpacity={0.8}
-              onPress={() => forceSwipe('left')}
-            >
-              <Ionicons name="close" size={26} color={Colors.textPrimary} />
-            </TouchableOpacity>
-
-            {/* Bookmark */}
-            <TouchableOpacity style={styles.btnBookmark} activeOpacity={0.8}>
-              <Ionicons name="bookmark-outline" size={22} color={Colors.textPrimary} />
-            </TouchableOpacity>
-
-            {/* Like — primary CTA */}
-            <TouchableOpacity
-              style={styles.btnLike}
-              activeOpacity={0.82}
-              onPress={() => forceSwipe('right')}
-            >
-              <Ionicons name="heart" size={28} color={Colors.textOnYellow} />
-            </TouchableOpacity>
-
-          </View>
+      {/* ── Swipe-save failure toast ── */}
+      {swipeErrorBanner && (
+        <View style={styles.swipeErrorBanner} pointerEvents="none">
+          <Ionicons name="alert-circle-outline" size={16} color={Colors.textOnYellow} />
+          <Text style={styles.swipeErrorBannerText}>{swipeErrorBanner}</Text>
         </View>
-      ) : (
-        <EmptyState onRefresh={() => setDeckIndex(0)} />
       )}
 
     </View>
@@ -613,7 +821,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  // ── Empty State ──────────────────────────────────────────────────────────────
+  // ── Empty / Loading / Error / Locked States ─────────────────────────────────────
   emptyContainer: {
     flex: 1,
     alignItems: 'center',
@@ -659,6 +867,27 @@ const styles = StyleSheet.create({
     fontWeight: Typography.weight.semibold,
     color: Colors.primary,
     letterSpacing: 0.5,
+  },
+
+  // ── Swipe-save failure toast ─────────────────────────────────────────────────
+  swipeErrorBanner: {
+    position: 'absolute',
+    left: Spacing.base,
+    right: Spacing.base,
+    bottom: Spacing.xl,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    backgroundColor: Colors.danger,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.md,
+  },
+  swipeErrorBannerText: {
+    flex: 1,
+    fontSize: Typography.size.sm,
+    fontWeight: Typography.weight.semibold,
+    color: Colors.textOnYellow,
   },
 
 });

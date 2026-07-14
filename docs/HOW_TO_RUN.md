@@ -133,3 +133,36 @@ npm run android
 **Icons not showing (blank squares)**
 - This means `react-native-vector-icons` fonts haven't been linked yet
 - Run `npm run android` once — the `fonts.gradle` script copies them automatically
+
+---
+
+## Shutting Everything Down
+
+The app now depends on the local Supabase stack too (Docker), not just Metro/the emulator. Shut down in this order:
+
+1. **Stop Metro** — in its terminal, press `Ctrl+C`.
+2. **Stop the local Supabase stack** (from `StudyMatch/`):
+   ```sh
+   npx supabase stop
+   ```
+   This stops all the backend containers (Postgres, Auth, Realtime, Storage, Studio, Kong). Your database data is preserved on disk — the next `npx supabase start` picks up right where you left off, no data loss.
+3. **Close the emulator** — close its window, or from a terminal:
+   ```sh
+   adb -s emulator-5554 emu kill
+   ```
+4. **(Optional) Quit Docker Desktop** — only needed if you want to free up RAM/CPU; not required for day-to-day work, since `supabase stop` already stops the containers.
+
+### Full reset (rare — wipes local DB data)
+If you want to start the backend completely fresh (drop all local test users/data and replay every migration from scratch):
+```sh
+npx supabase db reset
+```
+This does **not** touch your migration files (`supabase/migrations/`) — only the live local database contents.
+
+### Everyday startup, for reference
+```sh
+cd C:\MrBardak\Code\StudyDate\StudyMatch
+npx supabase start     # backend (Docker) — leave running
+npm start               # Metro — separate terminal, leave running
+npm run android         # separate terminal, after Metro is ready
+```

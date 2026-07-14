@@ -4,7 +4,7 @@ This guide covers the integration between frontend and backend for StudyMatch. I
 
 See [frontend-dev.md](frontend-dev.md) and [backend-dev.md](backend-dev.md) for standalone frontend and backend docs.
 
-> **Status**: Patterns are planned. Implementation begins once backend schema is deployed.
+> **Status**: Backend schema, RLS, and Realtime are implemented (`docs/backend-dev.md`'s checklist, `docs/development.md` Sessions 1-10). Most of this doc's code samples are still the original illustrative patterns from before implementation started — where the actual wiring diverged (e.g. the Lock System subscribes to `matches`, not `users`; match formation goes through `swipes`, not a direct `matches` insert), a note points to the real implementation and the dev log session that explains why.
 
 ---
 
@@ -122,6 +122,8 @@ async function fetchDiscoverableProfiles(): Promise<User[]> {
 Realtime subscriptions are critical for the Lock System (forcing navigation when a user acquires an active match) and for live chat messages.
 
 ### Lock System: Subscribe to user's `active_match_id` changes
+
+> **Illustrative only — not the actual implementation.** `users` was never added to the Realtime publication (only `matches` and `messages` were, per Phase 4). `DiscoveryScreen.tsx` subscribes to `matches` directly, filtered on `user1_id`/`user2_id`, instead of the pattern below. See `docs/development.md` Session 7 for why, and the "User swipes right on a profile" scenario further down this file for what's actually implemented (including Session 10's move to mutual-swipe-driven match formation).
 
 ```typescript
 import { RealtimeChannel } from '@supabase/supabase-js';
@@ -283,12 +285,15 @@ useEffect(() => {
 
 ## Common Integration Scenarios
 
-### Scenario: User swipes right on a profile (acquire a match)
+### Scenario: User swipes right on a profile (real double opt-in, implemented Session 10)
 
-1. Frontend calls `supabase.from('matches').insert({ user1_id, user2_id, status: 'active' })`
-2. Backend trigger updates both users' `active_match_id` on the `matches` table insert
-3. Realtime notification fires on both users' `users` table subscription
-4. Both users' Discovery screens receive the notification → force-navigate to chat (locked)
+A right swipe **never inserts into `matches` directly** — `authenticated` has no INSERT grant on that table at all (see `mutual_match_formation.sql`). Both sides recording a decision is what forms a match:
+
+1. Frontend calls `supabase.from('swipes').insert({ swiper_id, target_id, direction: 'right' })` — identical shape to a left swipe/pass, just a different `direction`.
+2. A backend trigger (`form_match_on_mutual_swipe`, `AFTER INSERT` on `swipes`) checks for the reciprocal right-swipe. Nothing else happens if it's not there yet (one-sided swipe = no match, by design — this is what actually fixes the double opt-in requirement, previously unimplemented and the source of a real reported bug).
+3. Once both sides have swiped right on each other, that same trigger inserts the `matches` row itself (`SECURITY DEFINER`) — which in turn fires the existing Lock System trigger pair (Migration 7) exactly as if a client had inserted it, setting both users' `active_match_id`.
+4. Realtime notification fires on both users' **`matches`** table subscription (not `users` — `users` was never added to the Realtime publication; see `docs/development.md` Session 7 for why the frontend pattern below subscribes to `matches` directly instead of the `users`-table pattern shown earlier in this doc).
+5. Both users' Discovery screens receive the notification → force-navigate to chat (locked) — this fires identically regardless of *which* of the two swipes completed the pair, since it's driven by the `matches` row itself, not by which client happened to make the insert.
 
 ### Scenario: User sends a message
 

@@ -25,11 +25,17 @@ function looksLikeEmail(email: string): boolean {
 const MIN_PASSWORD_LENGTH = 6;
 
 export default function RegisterVerificationScreen({ navigation }: { navigation: any }) {
+  const [mode, setMode] = useState<'signup' | 'login'>('signup');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  function toggleMode() {
+    setMode((m) => (m === 'signup' ? 'login' : 'signup'));
+    setError('');
+  }
 
   async function handleContinue() {
     const trimmed = email.trim();
@@ -44,6 +50,18 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
     setError('');
     setLoading(true);
     try {
+      if (mode === 'login') {
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: trimmed,
+          password,
+        });
+        if (signInError) {
+          setError(signInError.message);
+          return;
+        }
+        navigation.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
+        return;
+      }
       // Creates the auth.users row → fires the backend `.edu` gate. A non-academic email
       // comes back as an error here; a valid one returns an immediate session (local
       // config has email confirmations disabled) plus an auto-created public.users row.
@@ -91,11 +109,14 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
         <View style={styles.content}>
 
           {/* Hero */}
-          <Text style={styles.stepTitle}>Step 1</Text>
-          <Text style={styles.stepSubtitle}>Academic Verification</Text>
+          <Text style={styles.stepTitle}>{mode === 'signup' ? 'Step 1' : 'Welcome Back'}</Text>
+          <Text style={styles.stepSubtitle}>
+            {mode === 'signup' ? 'Academic Verification' : 'Sign In'}
+          </Text>
           <Text style={styles.stepDesc}>
-            To maintain our academic integrity, please verify your institutional
-            email address.
+            {mode === 'signup'
+              ? 'To maintain our academic integrity, please verify your institutional email address.'
+              : 'Sign in with your institutional email and password to continue.'}
           </Text>
 
           {/* ── Form card ── */}
@@ -155,9 +176,11 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
             {error ? (
               <Text style={styles.errorText}>{error}</Text>
             ) : (
-              <Text style={styles.helperText}>
-                Your password is stored securely. You'll use it to sign back in.
-              </Text>
+              mode === 'signup' && (
+                <Text style={styles.helperText}>
+                  Your password is stored securely. You'll use it to sign back in.
+                </Text>
+              )
             )}
 
             <TouchableOpacity
@@ -170,10 +193,25 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
                 <ActivityIndicator color={Colors.textOnYellow} />
               ) : (
                 <>
-                  <Text style={styles.continueBtnText}>Continue</Text>
+                  <Text style={styles.continueBtnText}>
+                    {mode === 'signup' ? 'Continue' : 'Log In'}
+                  </Text>
                   <Ionicons name="arrow-forward" size={20} color={Colors.textOnYellow} />
                 </>
               )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.toggleModeBtn}
+              activeOpacity={0.7}
+              onPress={toggleMode}
+            >
+              <Text style={styles.toggleModeText}>
+                {mode === 'signup' ? 'Already have an account? ' : 'New to StudyMatch? '}
+                <Text style={styles.toggleModeLink}>
+                  {mode === 'signup' ? 'Log In' : 'Create Account'}
+                </Text>
+              </Text>
             </TouchableOpacity>
           </View>
 
@@ -332,6 +370,20 @@ const styles = StyleSheet.create({
     fontSize: Typography.size.lg,
     fontWeight: Typography.weight.bold,
     color: Colors.textOnYellow,
+  },
+
+  // Mode toggle (sign up ↔ log in)
+  toggleModeBtn: {
+    marginTop: Spacing.md,
+  },
+  toggleModeText: {
+    fontSize: Typography.size.sm,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+  },
+  toggleModeLink: {
+    color: Colors.primary,
+    fontWeight: Typography.weight.semibold,
   },
 
   // Support footer

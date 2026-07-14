@@ -10,6 +10,7 @@ import {
   Platform,
   Dimensions,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography, Shadow } from '../theme';
@@ -93,6 +94,7 @@ export default function ChatScreen({
   const [matchId, setMatchId] = useState<string | null>(
     route?.params?.matchId ?? null,
   );
+  const [partnerName, setPartnerName] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
@@ -131,8 +133,31 @@ export default function ChatScreen({
       if (!resolvedMatchId) {
         // No active match — the empty state below explains it.
         setMessages([]);
+        setPartnerName('');
         return;
       }
+
+      // Names aren't part of the photo-blur progressive disclosure (only photos stay
+      // hidden until mutual reveal) — users_select_matched RLS already lets a matched
+      // participant read their partner's row. Same fetch shape as DashboardScreen.tsx's
+      // upcoming-session partner lookup.
+      const { data: matchRow, error: matchRowError } = await supabase
+        .from('matches')
+        .select('user1_id, user2_id')
+        .eq('id', resolvedMatchId)
+        .single();
+      if (matchRowError) {
+        setError(matchRowError.message);
+        return;
+      }
+      const partnerId =
+        matchRow.user1_id === userId ? matchRow.user2_id : matchRow.user1_id;
+      const { data: partnerRow } = await supabase
+        .from('users')
+        .select('name')
+        .eq('id', partnerId)
+        .single();
+      setPartnerName(partnerRow?.name ?? '');
 
       const { data: rows, error: msgError } = await supabase
         .from('messages')
@@ -179,6 +204,35 @@ export default function ChatScreen({
     }
   }
 
+  // Manual Termination (PRD §5): one-tap exit that immediately releases the Lock
+  // System hold on both users. The matches_sync_active_match_after trigger (Phase 3)
+  // nulls active_match_id on both participants the instant status leaves 'active'.
+  async function handleEndMatch() {
+    if (!matchId) return;
+    Alert.alert(
+      'End this match?',
+      'Your study partner has changed their focus. This will unlock Discovery for both of you.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'End Match',
+          style: 'destructive',
+          onPress: async () => {
+            const { error: endError } = await supabase
+              .from('matches')
+              .update({ status: 'terminated' })
+              .eq('id', matchId);
+            if (endError) {
+              setError(endError.message);
+              return;
+            }
+            navigation.navigate('MainTabs');
+          },
+        },
+      ],
+    );
+  }
+
   return (
     <View style={styles.root}>
       {/* ── Header ── */}
@@ -196,11 +250,15 @@ export default function ChatScreen({
           </View>
           <View>
             <Text style={styles.headerTitle}>Physics Partner</Text>
-            <Text style={styles.headerSubtitle}>Anonymous Match</Text>
+            <Text style={styles.headerSubtitle}>{partnerName || 'Anonymous Match'}</Text>
           </View>
         </View>
 
-        <TouchableOpacity style={styles.headerMenu}>
+        <TouchableOpacity
+          style={styles.headerMenu}
+          onPress={handleEndMatch}
+          disabled={!matchId}
+        >
           <Ionicons
             name="ellipsis-vertical"
             size={20}

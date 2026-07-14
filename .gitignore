@@ -16,3 +16,8 @@ StudyMatch/ios/build/
 .DS_Store
 *.log
 *.orig
+
+# Stray root-level npx install artifact (from running `supabase` commands outside StudyMatch/)
+/node_modules/
+/package.json
+/package-lock.json

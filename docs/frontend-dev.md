@@ -34,6 +34,8 @@ cd ios && bundle exec pod install && cd ..
 - Root `Stack.Navigator` wraps `MainTabs` (bottom-tab navigator with 5 tabs: Dashboard / Match / Chats / Planner / Profile)
 - Secondary/modal screens (`StudentProfile`, `EditProfile`, `Filter`, `StudyDatePlanner`-as-modal) live on the root stack
 - `navigation.navigate('Filter')` from a tab screen relies on React Navigation's automatic forwarding to the parent stack — this is expected, not a bug
+- On launch, calls `supabase.auth.getSession()` once (shown as a brief splash spinner) and sets `initialRouteName` to `MainTabs` if a session already exists, otherwise `RegisterVerification` — a returning user with a valid session skips registration entirely
+- `MatchFoundScreen` is a real file (`src/screens/MatchFoundScreen.tsx`) but is **not currently registered** in this stack, and its "Start Chat" button navigates to a `'Chat'` route that doesn't exist (the tab is `'Chats'`) — currently unreachable in the running app
 
 **Type safety**: `RootStackParamList` and `TabParamList` in [`src/types/index.ts`](../StudyMatch/src/types/index.ts) — extend these, never use untyped `navigation: any` params for new routes.
 
@@ -63,15 +65,37 @@ When wiring real data (Supabase):
 - Swipe deck using `react-native-gesture-handler`'s native `Gesture.Pan()`
 - Animations use `Animated.ValueXY` with `useNativeDriver: false` throughout (both drag and release)
 - Position resets in a `useEffect` keyed on `deckIndex` **after** state updates (not synchronously)
-- Deck cycles through a `PROFILES` array — extend to real data when backend exists
+- Deck reads real candidates from `discoverable_users`; `recordSwipe()` persists each decision to `public.swipes` (match formation itself happens server-side on mutual right-swipes, see backend-dev.md)
+- `recordSwipe()` failure handling: silent `console.warn` only for `23505` (re-swiping an already-decided candidate — expected/harmless); every other failure (including a null/stale `currentUserId` from an expired session) shows a self-dismissing bottom toast banner and, for the null-user case, re-runs `loadDiscovery()` to surface the real auth error state — don't let a swipe fail silently again
 
 **Chat** ([`ChatScreen.tsx`](../StudyMatch/src/screens/ChatScreen.tsx))
-- Mock message list; will subscribe to Supabase Realtime for real messages
+- Real message history loaded on mount (no live Realtime subscription yet — messages don't push live, only load-on-mount/refetch)
+- Header subtitle shows the matched partner's real `name` (fetched via the match's `user1_id`/`user2_id` → `users_select_matched` RLS), falling back to "Anonymous Match" only while unresolved — names are not part of the photo-blur progressive disclosure, only photos stay hidden until mutual reveal
 - Reveal button drives mutual `both_revealed` flow (currently visual state only)
+
+**Registration Step 1 / Login** ([`RegisterVerificationScreen.tsx`](../StudyMatch/src/screens/RegisterVerificationScreen.tsx))
+- Doubles as the login screen: a `mode` toggle (`'signup' | 'login'`) switches the same email/password fields between `supabase.auth.signUp` → `RegisterProfile` and `supabase.auth.signInWithPassword` → `navigation.reset` straight to `MainTabs`
+- No separate LoginScreen file — this was a deliberate choice to reuse the existing form rather than duplicate it
 
 **Filter** ([`FilterScreen.tsx`](../StudyMatch/src/screens/FilterScreen.tsx))
 - State round-trips back to Discovery via navigation params
 - Demonstrates the params-handoff pattern used across the app
+
+**Dashboard** ([`DashboardScreen.tsx`](../StudyMatch/src/screens/DashboardScreen.tsx))
+- Fetches own profile + upcoming `study_dates` (active match only) + a "Recently Liked" list (`public.swipes` where `direction='right'`) on mount and on tab focus (`useFocusEffect`, same pattern as Discovery)
+- "Recently Liked" replaced an earlier mock "Recent Matches %" section — there's no compatibility-score field in the schema, so don't reintroduce a percentage badge here without a real backing column
+- Reading a liked target's profile depends on the `users_select_swiped_right` RLS policy (outbound-only, no "who liked me" leak) — see backend-dev.md
+
+**My Profile** ([`MyProfileScreen.tsx`](../StudyMatch/src/screens/MyProfileScreen.tsx))
+- Fetches own profile on mount and on tab focus; Academic Details/Badges/photos all read straight off the `users` row (`university`/`department`/`year`/`badges`/`photo_url`/`photos`)
+- `badges` is normally `{}` for every real user today (Phase 5's post-date survey isn't built) — the empty state is expected, not a bug
+- "Log Out" button (below Edit Profile) confirms via `Alert`, calls `supabase.auth.signOut()`, then `navigation.reset`s to `RegisterVerification`
+- `EditProfileScreen.tsx` is NOT wired (still fully mock, including a hardcoded avatar URL and a no-op Save) — next natural gap if picking this area back up
+
+**Match Found** ([`MatchFoundScreen.tsx`](../StudyMatch/src/screens/MatchFoundScreen.tsx))
+- Shows the real matched partner's name (fetched via the current user's `active_match_id`, no route param needed — the Lock System guarantees at most one active match), falling back to "your study partner" while unresolved
+- Everything else on this screen is still mock (98% "synergy" score, subject name) and it has its own local color constants instead of `src/theme`
+- **Not currently reachable**: not registered in `AppNavigator.tsx`'s `Stack.Navigator`, and its "Start Chat" button navigates to a `'Chat'` route that doesn't exist
 
 ### State Handoff Pattern (Without a Global Store)
 

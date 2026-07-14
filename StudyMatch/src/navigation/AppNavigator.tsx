@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, ActivityIndicator } from 'react-native';
+import { supabase } from '../lib/supabase';
 
 import DashboardScreen from '../screens/DashboardScreen';
 import DiscoveryScreen from '../screens/DiscoveryScreen';
@@ -64,10 +65,29 @@ function MainTabs() {
 
 // ── Root Stack ─────────────────────────────────────────────────────────────────
 export default function AppNavigator() {
+  // Resolves once on mount: an existing session skips straight to MainTabs instead
+  // of always landing on RegisterVerification. initialRouteName only applies at the
+  // Stack.Navigator's first mount, so we hold off rendering it until this is known.
+  const [initialRoute, setInitialRoute] = useState<'RegisterVerification' | 'MainTabs' | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setInitialRoute(data.session ? 'MainTabs' : 'RegisterVerification');
+    });
+  }, []);
+
+  if (initialRoute === null) {
+    return (
+      <View style={styles.splash}>
+        <ActivityIndicator color={Colors.primary} size="large" />
+      </View>
+    );
+  }
+
   return (
     <NavigationContainer>
       <Stack.Navigator
-        initialRouteName="RegisterVerification"
+        initialRouteName={initialRoute}
         screenOptions={{
           headerShown: false,
           animation: 'slide_from_right',
@@ -92,6 +112,12 @@ export default function AppNavigator() {
 }
 
 const styles = StyleSheet.create({
+  splash: {
+    flex: 1,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   tabBar: {
     backgroundColor: Colors.tabBg,
     borderTopColor: '#F0E4D4',

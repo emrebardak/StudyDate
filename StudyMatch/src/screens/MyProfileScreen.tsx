@@ -1,37 +1,46 @@
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
   StyleSheet,
+  Alert,
+  Image,
+  ActivityIndicator,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography, Shadow } from '../theme';
+import { supabase } from '../lib/supabase';
+import { mapUserFromAPI } from '../data/mappers';
+import type { User } from '../types';
 
-// ── Mock Data ──────────────────────────────────────────────────────────────────
-const ACADEMIC_ROWS = [
-  { label: 'UNIVERSITY', value: 'Stanford University' },
-  { label: 'DEPARTMENT', value: 'Computer Science' },
-  { label: 'YEAR', value: 'Senior' },
-];
+// Badge keys per PRD §7 ("Post-Date: Trust Score & Gamification") — awarded via
+// post-date surveys, a later phase not built yet, so `badges` is normally empty
+// for every real user today. Unknown keys still render (generic icon fallback)
+// rather than being silently dropped, so this doesn't have to be kept in sync
+// with that phase's exact naming later.
+const BADGE_META: Record<string, { icon: string; label: string }> = {
+  Punctual: { icon: 'time', label: 'Punctual' },
+  'Silent & Focused': { icon: 'volume-mute', label: 'Silent & Focused' },
+  'Great Explainer': { icon: 'bulb', label: 'Great Explainer' },
+  'Good Break Buddy': { icon: 'cafe', label: 'Good Break Buddy' },
+};
 
-const BADGES = [
-  { icon: 'star', label: 'Top 1%' },
-  { icon: 'trophy', label: 'Hackathon' },
-  { icon: 'bulb', label: 'Innovator' },
-  { icon: 'flame', label: 'Streak' },
-];
+function badgeMeta(key: string): { icon: string; label: string } {
+  return BADGE_META[key] ?? { icon: 'ribbon', label: key };
+}
 
 // ── Badge Item ─────────────────────────────────────────────────────────────────
-function BadgeItem({ icon, label }: { icon: string; label: string }) {
+function BadgeItem({ icon, label, count }: { icon: string; label: string; count: number }) {
   return (
     <View style={styles.badgeItem}>
       <View style={styles.badgeCircle}>
-        <Ionicons name={icon} size={22} color={Colors.primary} />
+        <Ionicons name={icon as any} size={22} color={Colors.primary} />
       </View>
       <Text style={styles.badgeLabel} numberOfLines={1}>
-        {label}
+        {count > 1 ? `${label} ×${count}` : label}
       </Text>
     </View>
   );
@@ -39,6 +48,104 @@ function BadgeItem({ icon, label }: { icon: string; label: string }) {
 
 // ── Main Screen ────────────────────────────────────────────────────────────────
 export default function MyProfileScreen({ navigation }: { navigation: any }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const loadProfile = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      const userId = auth?.user?.id;
+      if (!userId) {
+        setError('Not signed in.');
+        return;
+      }
+      const { data: row, error: rowError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .single();
+      if (rowError) {
+        setError(rowError.message);
+        return;
+      }
+      setUser(mapUserFromAPI(row));
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to load profile.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadProfile();
+  }, [loadProfile]);
+
+  // Refresh whenever this tab regains focus, e.g. coming back from Edit Profile.
+  useFocusEffect(
+    useCallback(() => {
+      loadProfile();
+    }, [loadProfile]),
+  );
+
+  function handleLogOut() {
+    Alert.alert('Log out?', 'You will need to sign in again to access your account.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Log Out',
+        style: 'destructive',
+        onPress: async () => {
+          await supabase.auth.signOut();
+          navigation.reset({
+            index: 0,
+            routes: [{ name: 'RegisterVerification' }],
+          });
+        },
+      },
+    ]);
+  }
+
+  if (loading && !user) {
+    return (
+      <View style={styles.root}>
+        <View style={styles.stateContainer}>
+          <ActivityIndicator color={Colors.primary} size="large" />
+        </View>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.root}>
+        <View style={styles.stateContainer}>
+          <Ionicons name="warning-outline" size={52} color={Colors.textMuted} />
+          <Text style={styles.emptyTitle}>Something went wrong</Text>
+          <Text style={styles.emptySubtitle}>{error}</Text>
+          <TouchableOpacity style={styles.refreshBtn} onPress={loadProfile} activeOpacity={0.8}>
+            <Ionicons name="refresh-outline" size={16} color={Colors.primary} />
+            <Text style={styles.refreshBtnText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  const academicRows = [
+    { label: 'UNIVERSITY', value: user?.university || '—' },
+    { label: 'DEPARTMENT', value: user?.department || '—' },
+    { label: 'YEAR', value: user?.year || '—' },
+  ];
+
+  const badgeEntries = Object.entries(user?.badges ?? {});
+
+  const photos = user?.photos ?? [];
+  const mainPhoto = user?.photoUrl || photos[0];
+  const secondaryPhotos = photos.filter((p) => p !== mainPhoto).slice(0, 2);
+  const morePhotoCount = Math.max(photos.length - (mainPhoto ? 1 : 0) - secondaryPhotos.length, 0);
+
   return (
     <View style={styles.root}>
       {/* ── Header ── */}
@@ -61,18 +168,31 @@ export default function MyProfileScreen({ navigation }: { navigation: any }) {
       >
         {/* ── Photo Grid (no horizontal padding) ── */}
         <View style={styles.photoGrid}>
-          {/* Large top placeholder */}
+          {/* Large top placeholder — real photo once uploaded */}
           <View style={styles.photoLarge}>
-            <Ionicons name="person" size={48} color={Colors.textMuted} />
+            {mainPhoto ? (
+              <Image source={{ uri: mainPhoto }} style={styles.photoImage} />
+            ) : (
+              <Ionicons name="person" size={48} color={Colors.textMuted} />
+            )}
           </View>
           {/* Two smaller placeholders side by side */}
           <View style={styles.photoRow}>
-            <View style={styles.photoSmall} />
+            <View style={styles.photoSmall}>
+              {!!secondaryPhotos[0] && (
+                <Image source={{ uri: secondaryPhotos[0] }} style={styles.photoImage} />
+              )}
+            </View>
             <View style={styles.photoSmallRight}>
-              {/* +3 MORE overlay on the second photo */}
-              <View style={styles.moreOverlay}>
-                <Text style={styles.moreText}>+3 MORE</Text>
-              </View>
+              {!!secondaryPhotos[1] && (
+                <Image source={{ uri: secondaryPhotos[1] }} style={styles.photoImage} />
+              )}
+              {/* +N MORE overlay on the second photo, only when there are more */}
+              {morePhotoCount > 0 && (
+                <View style={styles.moreOverlay}>
+                  <Text style={styles.moreText}>+{morePhotoCount} MORE</Text>
+                </View>
+              )}
             </View>
           </View>
         </View>
@@ -81,13 +201,13 @@ export default function MyProfileScreen({ navigation }: { navigation: any }) {
           {/* ── Academic Details ── */}
           <Text style={styles.sectionLabel}>Academic Details</Text>
           <View style={styles.academicCard}>
-            {ACADEMIC_ROWS.map((row, i) => (
+            {academicRows.map((row, i) => (
               <View key={row.label}>
                 <View style={styles.academicRow}>
                   <Text style={styles.academicKey}>{row.label}</Text>
                   <Text style={styles.academicValue}>{row.value}</Text>
                 </View>
-                {i < ACADEMIC_ROWS.length - 1 && (
+                {i < academicRows.length - 1 && (
                   <View style={styles.academicDivider} />
                 )}
               </View>
@@ -101,16 +221,25 @@ export default function MyProfileScreen({ navigation }: { navigation: any }) {
               <Text style={styles.viewAll}>View All</Text>
             </TouchableOpacity>
           </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.badgesScrollView}
-            contentContainerStyle={styles.badgesScrollContent}
-          >
-            {BADGES.map((b) => (
-              <BadgeItem key={b.label} icon={b.icon} label={b.label} />
-            ))}
-          </ScrollView>
+          {badgeEntries.length === 0 ? (
+            <Text style={styles.emptyBadgesText}>
+              No badges yet — complete a study date to start earning them.
+            </Text>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.badgesScrollView}
+              contentContainerStyle={styles.badgesScrollContent}
+            >
+              {badgeEntries.map(([key, count]) => {
+                const meta = badgeMeta(key);
+                return (
+                  <BadgeItem key={key} icon={meta.icon} label={meta.label} count={count} />
+                );
+              })}
+            </ScrollView>
+          )}
 
           {/* ── Edit Profile ── */}
           <TouchableOpacity
@@ -120,6 +249,16 @@ export default function MyProfileScreen({ navigation }: { navigation: any }) {
           >
             <Ionicons name="pencil" size={16} color={Colors.textOnYellow} />
             <Text style={styles.editBtnText}>Edit Profile</Text>
+          </TouchableOpacity>
+
+          {/* ── Log Out ── */}
+          <TouchableOpacity
+            style={styles.logOutBtn}
+            activeOpacity={0.85}
+            onPress={handleLogOut}
+          >
+            <Ionicons name="log-out-outline" size={18} color={Colors.danger} />
+            <Text style={styles.logOutBtnText}>Log Out</Text>
           </TouchableOpacity>
         </View>
 
@@ -134,6 +273,45 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+
+  // Loading / Error state
+  stateContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.xxl,
+    gap: Spacing.md,
+  },
+  emptyTitle: {
+    fontSize: Typography.size.xl,
+    fontWeight: Typography.weight.bold,
+    color: Colors.textPrimary,
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    fontSize: Typography.size.md,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  refreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginTop: Spacing.base,
+    backgroundColor: Colors.surface,
+    borderWidth: 1.5,
+    borderColor: Colors.borderGold,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+  },
+  refreshBtnText: {
+    fontSize: Typography.size.sm,
+    fontWeight: Typography.weight.semibold,
+    color: Colors.primary,
+    letterSpacing: 0.5,
   },
 
   // Header
@@ -173,6 +351,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
   photoRow: {
     flexDirection: 'row',
@@ -181,12 +360,17 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 130,
     backgroundColor: Colors.surfaceMid,
+    overflow: 'hidden',
   },
   photoSmallRight: {
     flex: 1,
     height: 130,
     backgroundColor: Colors.surfaceMid,
     overflow: 'hidden',
+  },
+  photoImage: {
+    width: '100%',
+    height: '100%',
   },
   moreOverlay: {
     ...StyleSheet.absoluteFill,
@@ -265,6 +449,12 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     fontWeight: Typography.weight.medium,
   },
+  emptyBadgesText: {
+    fontSize: Typography.size.sm,
+    color: Colors.textMuted,
+    lineHeight: 20,
+    marginBottom: Spacing.lg,
+  },
   badgesScrollView: {
     marginBottom: Spacing.lg,
   },
@@ -309,6 +499,26 @@ const styles = StyleSheet.create({
     fontSize: Typography.size.base,
     fontWeight: Typography.weight.bold,
     color: Colors.textOnYellow,
+    letterSpacing: 0.3,
+  },
+
+  // Log out button
+  logOutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.danger,
+    paddingVertical: Spacing.base,
+    gap: Spacing.sm,
+    marginTop: Spacing.md,
+  },
+  logOutBtnText: {
+    fontSize: Typography.size.base,
+    fontWeight: Typography.weight.bold,
+    color: Colors.danger,
     letterSpacing: 0.3,
   },
 });

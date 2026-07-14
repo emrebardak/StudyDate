@@ -152,16 +152,18 @@ CREATE TRIGGER edu_email_check
 
 ---
 
-## Realtime Configuration (Planned)
+## Realtime Configuration — Implemented (Phase 4)
 
-Publish the `matches` table so frontend can subscribe to `active_match_id` and match-status changes instantly.
+`matches` and `messages` are both published, in `realtime_publication.sql`:
 
 ```sql
--- Enable publication (exact syntax depends on Supabase version)
-ALTER PUBLICATION supabase_realtime ADD TABLE matches;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.matches;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
 ```
 
-**Important**: Confirm RLS policies apply to realtime subscriptions — Realtime does not bypass RLS, but double-check the policy covers the subscribed columns/rows.
+RLS applies to `postgres_changes` exactly as it does to a normal `SELECT` — no separate config needed, and no changes were needed to Migration 6's existing `matches_select_participant`/`messages_select_participant` policies. This was verified directly, not just asserted from documentation: a Node script using the real `@supabase/supabase-js` client subscribed a non-participant with **zero client-side filter** (the actual "firehose" case) to `matches` and received nothing when a match formed between two other users, while the real participant (filtered) received the event immediately. See `docs/development.md` Session 7.
+
+`DiscoveryScreen.tsx` subscribes directly to `matches` (not `users`) for the Lock System, since `users` was never added to the publication in this phase — see Session 7 for why.
 
 ---
 
@@ -200,18 +202,15 @@ $$ LANGUAGE plpgsql;
 
 **Documentation**: Use named constants for point values and thresholds so a future PRD change is a one-line edit, not a grep-and-replace.
 
-### Shadowban Filtering
+### Shadowban Filtering — Implemented (Phase 4)
 
-Users with `trust_score < 60` are invisible in the Discovery matching pool but can still use the app normally (not banned, just hidden).
+Users with `trust_score < 60` are invisible in the Discovery matching pool but can still use the app normally (not banned, just hidden) — verified: a shadowbanned test user can still read her own `public.users` row directly.
 
-Implement as a PostgreSQL **View** (`discoverable_users`) that Discovery queries read from, rather than sprinkling `WHERE trust_score >= 60` across multiple query sites:
+Implemented as `discoverable_users_view.sql`, with one deviation from the literal `SELECT *` above: an explicit column list that excludes `email` and `verification_code` (neither read by the frontend `User` type; no reason to broadcast either to every authenticated client via Discovery). See `docs/development.md` Session 7 for the full reasoning and how cross-user reads work without loosening `public.users`' own-row RLS (the view deliberately isn't `security_invoker`).
 
-```sql
-CREATE VIEW discoverable_users AS
-  SELECT * FROM users WHERE trust_score >= 60;
-```
+`DiscoveryScreen.tsx` reads from `discoverable_users` (excluding self and already-locked candidates) instead of the raw `users` table — confirmed via REST-level testing matching the screen's exact query shape.
 
-Frontend's Discovery screen reads from this view instead of the raw `users` table. Confirm this view is actually used by the frontend's data-access layer.
+**Hardened in `discoverable_users_hardening.sql` (Session 8)** after a bug-hunt audit found two gaps: the `active_match_id IS NULL` exclusion was only ever applied client-side (a query-string param any authenticated client could omit), and there was no persisted swipe/pass history so a refreshed Discovery deck would loop the same candidates forever. The view now enforces `active_match_id IS NULL` itself and adds `NOT EXISTS (... public.swipes ...)` keyed on `auth.uid()`, backed by a new `public.swipes` table (own-row RLS, `UNIQUE (swiper_id, target_id)`, no `UPDATE`/`DELETE` — a swipe decision is permanent). See `docs/development.md` Session 8, including the empirical two-caller test proving `auth.uid()` re-evaluates per querying session inside a non-`security_invoker` view rather than being fixed at view-creation time.
 
 ### Match Timeout Cron Job
 
@@ -247,14 +246,18 @@ $$);
 
 **Coordination**: If the Lock System's single-active-match constraint is enforced by a DB trigger, this cron job must go through the same code path/trigger rather than writing to `active_match_id` directly and bypassing the invariant.
 
-### Lock System Enforcement
+### Lock System Enforcement — Implemented (Phase 3)
 
-The single-active-match constraint (`active_match_id` on `users`) must be enforceable by the schema itself, not just application logic.
+The illustrative `CHECK` constraint below (referencing another table in a `CHECK`) is **not valid Postgres** — flagged during Phase 1 planning and confirmed during implementation. The single-active-match invariant is enforced by a **trigger pair** on `public.matches` instead, in `lock_system_enforcement.sql`:
 
-Approach: a constraint, trigger, or transaction pattern that prevents a user from acquiring a second `active_match_id` while one is already set.
+- `enforce_single_active_match()` (`BEFORE INSERT OR UPDATE`, `SECURITY DEFINER`) — rejects a match becoming `active` while either participant already has a *different* active match. Raises `ERRCODE = 'ST001'` / `HINT = 'ALREADY_LOCKED'` for the frontend to detect.
+- `sync_active_match_id()` (`AFTER INSERT OR UPDATE`, `SECURITY DEFINER`) — mirrors `matches.status` into both participants' `users.active_match_id`: sets it on both when a match goes active, nulls it on both (guarded so it never clobbers a lock acquired elsewhere) when an active match closes.
+
+Both are `SECURITY DEFINER` because they must read/write **both** participants' `users` rows — RLS alone only permits a caller's own row plus a matched partner's read, not a write to the other participant.
 
 ```sql
--- Example: constraint approach
+-- Non-functional illustrative constraint from the original PRD/planning pass — kept here
+-- only to document why it was rejected, not as a pattern to follow.
 ALTER TABLE users
 ADD CONSTRAINT only_one_active_match
 CHECK (
@@ -263,7 +266,11 @@ CHECK (
 );
 ```
 
-**Flag explicitly during implementation**: If the database alone cannot guarantee this, application-level enforcement is required.
+Verified at both the SQL (trigger) and REST (End Match / manual termination) level — see `docs/development.md` Session 5.
+
+**Hardened in `lock_system_hardening.sql` (Session 6)** after a bug-hunt audit found two gaps in the above:
+- `protect_privileged_user_columns()` (`BEFORE UPDATE` on `public.users`, **`SECURITY INVOKER`** — deliberately *not* `DEFINER`, see the migration header and Session 6's dev log for why `DEFINER` would silently make this check a no-op) blocks direct client writes to `active_match_id`/`trust_score`, closing a self-unlock/ghosting hole that Phase 1's own-row `UPDATE` RLS policy left open.
+- `enforce_single_active_match()` now takes `FOR UPDATE` row locks (ordered by `id`, to avoid deadlocks) on both participants before checking their lock state, closing a TOCTOU race where two concurrent match-creation attempts sharing a user could both pass the check before either committed.
 
 ---
 
@@ -303,13 +310,17 @@ export default async (req: Request) => {
 - [x] `public.users` table created with RLS enabled — Phase 1
 - [x] `matches`/`messages`/`study_dates` tables created with RLS + grants — Phase 2 (`create_matches_messages_study_dates.sql`, `matches_messages_study_dates_rls.sql`); `users.active_match_id` FK closed; verified at SQL and REST level (see development.md Session 4)
 - [x] `.edu` auth gate trigger deployed and tested — `edu_email_gate.sql`, verified against GoTrue v2.192.0
-- [ ] Lock System single-active-match trigger on `matches` — Phase 3
-- [ ] Realtime publication configured on `matches` table — Phase 4
+- [x] Lock System single-active-match trigger on `matches` — Phase 3 (`lock_system_enforcement.sql`); verified at SQL and REST level, see development.md Session 5
+- [x] Lock System hardened against direct client writes (`active_match_id`/`trust_score`) and a concurrent-match TOCTOU race — `lock_system_hardening.sql`; verified via SQL, a real two-session concurrency test, and REST, see development.md Session 6
+- [x] Realtime publication configured on `matches` (and `messages`) tables — Phase 4 (`realtime_publication.sql`); verified via `pg_publication_tables` and a real websocket client test proving RLS gates delivery, see development.md Session 7
 - [ ] Trust-score function tested (apply delta without double-counts) — Phase 5
-- [ ] Shadowban view created and accessible — Phase 4
+- [x] Shadowban view created and accessible — Phase 4 (`discoverable_users_view.sql`); excludes `email`/`verification_code` (deviation from the doc's literal `SELECT *`, flagged in the migration and dev log); wired into `DiscoveryScreen.tsx`, see development.md Session 7
+- [x] `discoverable_users` hardened: lock-status exclusion moved server-side (was client-filter-only), plus a `public.swipes` table so passed/matched candidates never reappear — `discoverable_users_hardening.sql`, see development.md Session 8
+- [x] Real double opt-in match formation (PRD §4) — `mutual_match_formation.sql`: a `swipes`-table trigger forms the match only on a mutual right-swipe, with `authenticated`'s direct INSERT on `matches` revoked entirely (closes a bug where a single one-sided swipe instantly matched both users); see development.md Session 10
+- [x] `users_select_swiped_right` RLS policy — `users_select_swiped_right.sql`: a user may read the profile of anyone they've swiped right on (outbound only, no "who liked me" leak), needed for Dashboard's Recently Liked section; see development.md Session 11
 - [ ] Match-timeout cron job deployed and tested — Phase 5
 - [ ] Edge Functions deployed and tested in isolation — not yet started
-- [x] Data mapping layer in place (`src/data/mappers.ts`: users, matches, messages, study_dates) — Chat + Study Date Planner wired; remaining screens still on mock data
+- [x] Data mapping layer in place (`src/data/mappers.ts`: users, matches, messages, study_dates) — Chat, Study Date Planner, Dashboard, and My Profile wired; `EditProfileScreen.tsx` remains mock (see development.md Session 11)
 - [ ] Real email verification (Supabase Auth OTP/magic-link) — Phase 1 currently uses a mock `verification_code` column (`'000000'`) as a placeholder, see `implemention.md`
 
 ---

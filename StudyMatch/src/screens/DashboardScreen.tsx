@@ -1,59 +1,45 @@
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
   StyleSheet,
+  ActivityIndicator,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography } from '../theme';
+import { supabase } from '../lib/supabase';
+import { mapUserFromAPI } from '../data/mappers';
+import type { User } from '../types';
 
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 
+interface UpcomingSession {
+  id: string;
+  day: string;
+  month: string;
+  subject: string;
+  timeLabel: string;
+  location: string;
+  partnerInitial: string;
+}
 
-// ── Mock Data ─────────────────────────────────────────────────────────────────
-const UPCOMING_SESSIONS = [
-  {
-    id: '1',
-    day: '14',
-    month: 'OCT',
-    subject: 'Advanced Calculus',
-    timeRange: '14:00 – 16:00',
-    location: 'Main Library, 3rd Floor',
-    partnerInitial: 'E',
-  },
-  {
-    id: '2',
-    day: '15',
-    month: 'OCT',
-    subject: 'Organic Chemistry',
-    timeRange: '09:30 – 11:00',
-    location: 'Café Nova, East Campus',
-    partnerInitial: 'M',
-  },
-];
+interface LikedProfile {
+  id: string;
+  name: string;
+  dept: string;
+  university: string;
+  initial: string;
+}
 
-const RECENT_MATCHES = [
-  {
-    id: '1',
-    name: 'Elena Rostova',
-    dept: 'Biomedical Engineering',
-    role: 'Research Fellow',
-    match: 98,
-    initial: 'E',
-  },
-  {
-    id: '2',
-    name: 'Marcus Torres',
-    dept: 'Theoretical Physics',
-    role: 'PhD Candidate',
-    match: 94,
-    initial: 'M',
-  },
-];
+function formatSessionTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
 // ── Session Row ───────────────────────────────────────────────────────────────
-function SessionRow({ session }: { session: typeof UPCOMING_SESSIONS[0] }) {
+function SessionRow({ session }: { session: UpcomingSession }) {
   return (
     <View style={styles.sessionRow}>
       {/* Date badge */}
@@ -69,7 +55,7 @@ function SessionRow({ session }: { session: typeof UPCOMING_SESSIONS[0] }) {
         </Text>
         <View style={styles.sessionMeta}>
           <Ionicons name="time-outline" size={12} color={Colors.textMuted} />
-          <Text style={styles.sessionMetaText}>{session.timeRange}</Text>
+          <Text style={styles.sessionMetaText}>{session.timeLabel}</Text>
         </View>
         <View style={styles.sessionMeta}>
           <Ionicons name="location-outline" size={12} color={Colors.textMuted} />
@@ -87,30 +73,195 @@ function SessionRow({ session }: { session: typeof UPCOMING_SESSIONS[0] }) {
   );
 }
 
-// ── Match Row ─────────────────────────────────────────────────────────────────
-function MatchRow({ match }: { match: typeof RECENT_MATCHES[0] }) {
+// ── Liked Row ─────────────────────────────────────────────────────────────────
+function LikedRow({ profile }: { profile: LikedProfile }) {
+  const subtitle = [profile.dept, profile.university].filter(Boolean).join(' · ');
   return (
     <View style={styles.matchRow}>
       <View style={styles.matchAvatar}>
-        <Text style={styles.matchInitial}>{match.initial}</Text>
+        <Text style={styles.matchInitial}>{profile.initial}</Text>
       </View>
 
       <View style={styles.matchInfo}>
-        <Text style={styles.matchName}>{match.name}</Text>
-        <Text style={styles.matchSub} numberOfLines={1}>
-          {match.dept} · {match.role}
-        </Text>
+        <Text style={styles.matchName}>{profile.name}</Text>
+        {!!subtitle && (
+          <Text style={styles.matchSub} numberOfLines={1}>
+            {subtitle}
+          </Text>
+        )}
       </View>
 
       <View style={styles.matchBadge}>
-        <Text style={styles.matchBadgeText}>{match.match}%</Text>
+        <Ionicons name="heart" size={14} color={Colors.textOnYellow} />
       </View>
     </View>
   );
 }
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
-export default function DashboardScreen({ navigation: _navigation }: { navigation: any }) {
+export default function DashboardScreen({ navigation }: { navigation: any }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [upcomingSessions, setUpcomingSessions] = useState<UpcomingSession[]>([]);
+  const [likedProfiles, setLikedProfiles] = useState<LikedProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  // Loads: (1) the caller's own profile (hero greeting, avatar initial), (2)
+  // upcoming study_dates for their active match, if any, and (3) a "Recently
+  // Liked" list of people they've swiped right on (public.swipes) — replaces
+  // the old mock "Recent Matches % badge" section, which had no backing
+  // compatibility-score data anywhere in the schema.
+  const loadDashboard = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      const userId = auth?.user?.id;
+      if (!userId) {
+        setError('Not signed in.');
+        return;
+      }
+
+      const { data: ownRow, error: ownError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .single();
+      if (ownError) {
+        setError(ownError.message);
+        return;
+      }
+      const me = mapUserFromAPI(ownRow);
+      setUser(me);
+
+      if (me.activeMatchId) {
+        const { data: matchRow } = await supabase
+          .from('matches')
+          .select('user1_id, user2_id')
+          .eq('id', me.activeMatchId)
+          .single();
+
+        const partnerId = matchRow
+          ? matchRow.user1_id === userId
+            ? matchRow.user2_id
+            : matchRow.user1_id
+          : null;
+
+        let partnerName = '';
+        if (partnerId) {
+          const { data: partnerRow } = await supabase
+            .from('users')
+            .select('name')
+            .eq('id', partnerId)
+            .single();
+          partnerName = partnerRow?.name ?? '';
+        }
+
+        const { data: dateRows } = await supabase
+          .from('study_dates')
+          .select('*')
+          .eq('match_id', me.activeMatchId)
+          .neq('status', 'cancelled')
+          .gt('scheduled_time', new Date().toISOString())
+          .order('scheduled_time', { ascending: true })
+          .limit(5);
+
+        setUpcomingSessions(
+          (dateRows ?? []).map((row) => {
+            const d = new Date(row.scheduled_time);
+            return {
+              id: row.id,
+              day: String(d.getDate()),
+              month: MONTHS[d.getMonth()],
+              subject: row.focus_subject || 'Study Session',
+              timeLabel: formatSessionTime(row.scheduled_time),
+              location: row.location || 'Location TBD',
+              partnerInitial: partnerName ? partnerName[0].toUpperCase() : '?',
+            };
+          }),
+        );
+      } else {
+        setUpcomingSessions([]);
+      }
+
+      const { data: likedRows } = await supabase
+        .from('swipes')
+        .select('target_id, created_at')
+        .eq('swiper_id', userId)
+        .eq('direction', 'right')
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (likedRows?.length) {
+        const targetIds = likedRows.map((r) => r.target_id);
+        const { data: likedUsers } = await supabase
+          .from('users')
+          .select('id, name, department, university')
+          .in('id', targetIds);
+        const byId = new Map((likedUsers ?? []).map((u) => [u.id, u]));
+        setLikedProfiles(
+          likedRows
+            .map((r) => byId.get(r.target_id))
+            .filter((u): u is { id: string; name: string; department: string; university: string } => !!u)
+            .map((u) => ({
+              id: u.id,
+              name: u.name || 'Anonymous Scholar',
+              dept: u.department || '',
+              university: u.university || '',
+              initial: (u.name || '?')[0].toUpperCase(),
+            })),
+        );
+      } else {
+        setLikedProfiles([]);
+      }
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to load dashboard.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadDashboard();
+  }, [loadDashboard]);
+
+  // Refresh on tab focus — e.g. coming back from Match after swiping, or from
+  // Planner after proposing a study date, so this doesn't show stale data.
+  useFocusEffect(
+    useCallback(() => {
+      loadDashboard();
+    }, [loadDashboard]),
+  );
+
+  const firstName = user?.name?.trim().split(/\s+/)[0] || 'Scholar';
+  const avatarInitial = user?.name ? user.name[0].toUpperCase() : '?';
+
+  if (loading && !user) {
+    return (
+      <View style={styles.root}>
+        <View style={styles.stateContainer}>
+          <ActivityIndicator color={Colors.primary} size="large" />
+        </View>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.root}>
+        <View style={styles.stateContainer}>
+          <Ionicons name="warning-outline" size={52} color={Colors.textMuted} />
+          <Text style={styles.emptyTitle}>Something went wrong</Text>
+          <Text style={styles.emptySubtitle}>{error}</Text>
+          <TouchableOpacity style={styles.refreshBtn} onPress={loadDashboard} activeOpacity={0.8}>
+            <Ionicons name="refresh-outline" size={16} color={Colors.primary} />
+            <Text style={styles.refreshBtnText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.root}>
 
@@ -121,7 +272,7 @@ export default function DashboardScreen({ navigation: _navigation }: { navigatio
           <Text style={styles.headerTitle}>StudyMatch</Text>
         </View>
         <TouchableOpacity style={styles.avatarCircle} activeOpacity={0.8}>
-          <Text style={styles.avatarInitial}>A</Text>
+          <Text style={styles.avatarInitial}>{avatarInitial}</Text>
         </TouchableOpacity>
       </View>
 
@@ -133,7 +284,7 @@ export default function DashboardScreen({ navigation: _navigation }: { navigatio
       >
 
         {/* Hero */}
-        <Text style={styles.heroTitle}>Welcome back, Scholar.</Text>
+        <Text style={styles.heroTitle}>Welcome back, {firstName}.</Text>
         <Text style={styles.heroSubtitle}>
           Here is your academic overview for the week.
         </Text>
@@ -150,37 +301,55 @@ export default function DashboardScreen({ navigation: _navigation }: { navigatio
           </View>
 
           {/* Session rows */}
-          {UPCOMING_SESSIONS.map((s, idx) => (
-            <React.Fragment key={s.id}>
-              {idx > 0 && <View style={styles.sessionGap} />}
-              <SessionRow session={s} />
-            </React.Fragment>
-          ))}
+          {upcomingSessions.length === 0 ? (
+            <Text style={styles.emptySectionText}>No upcoming sessions planned yet.</Text>
+          ) : (
+            upcomingSessions.map((s, idx) => (
+              <React.Fragment key={s.id}>
+                {idx > 0 && <View style={styles.sessionGap} />}
+                <SessionRow session={s} />
+              </React.Fragment>
+            ))
+          )}
 
           {/* View schedule link */}
-          <TouchableOpacity style={styles.viewScheduleBtn} activeOpacity={0.7}>
+          <TouchableOpacity
+            style={styles.viewScheduleBtn}
+            activeOpacity={0.7}
+            onPress={() => navigation.navigate('Planner')}
+          >
             <Text style={styles.viewScheduleText}>View Full Schedule</Text>
           </TouchableOpacity>
 
         </View>
 
-        {/* ── Recent Matches ── */}
+        {/* ── Recently Liked ── */}
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Recent Matches</Text>
-          <Ionicons name="person-add" size={20} color={Colors.primary} />
+          <Text style={styles.sectionTitle}>Recently Liked</Text>
+          <Ionicons name="heart-outline" size={20} color={Colors.primary} />
         </View>
 
         <View style={styles.matchesCard}>
-          {RECENT_MATCHES.map((m, idx) => (
-            <React.Fragment key={m.id}>
-              {idx > 0 && <View style={styles.matchDivider} />}
-              <MatchRow match={m} />
-            </React.Fragment>
-          ))}
+          {likedProfiles.length === 0 ? (
+            <Text style={[styles.emptySectionText, styles.emptySectionTextPadded]}>
+              You haven't liked anyone yet — head to Match to find a study partner.
+            </Text>
+          ) : (
+            likedProfiles.map((p, idx) => (
+              <React.Fragment key={p.id}>
+                {idx > 0 && <View style={styles.matchDivider} />}
+                <LikedRow profile={p} />
+              </React.Fragment>
+            ))
+          )}
         </View>
 
         {/* ── Find a Partner CTA ── */}
-        <TouchableOpacity style={styles.ctaCard} activeOpacity={0.88}>
+        <TouchableOpacity
+          style={styles.ctaCard}
+          activeOpacity={0.88}
+          onPress={() => navigation.navigate('Match')}
+        >
           <View style={styles.ctaIconWrap}>
             <Ionicons name="compass" size={26} color={Colors.textOnYellow} />
           </View>
@@ -251,6 +420,15 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.xxxl,
   },
 
+  // ── Loading / Error state ────────────────────────────────────────────────────
+  stateContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.xxl,
+    gap: Spacing.md,
+  },
+
   // ── Hero ────────────────────────────────────────────────────────────────────
   heroTitle: {
     fontSize: Typography.size.xxl,
@@ -296,6 +474,16 @@ const styles = StyleSheet.create({
     fontWeight: Typography.weight.semibold,
     color: Colors.primary,
     letterSpacing: 0.8,
+  },
+
+  // Empty section placeholder text (Upcoming Sessions / Recently Liked)
+  emptySectionText: {
+    fontSize: Typography.size.sm,
+    color: Colors.textMuted,
+    lineHeight: 20,
+  },
+  emptySectionTextPadded: {
+    padding: Spacing.md,
   },
 
   // Session row (inside card)
@@ -401,7 +589,7 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
   },
 
-  // ── Recent Matches ───────────────────────────────────────────────────────────
+  // ── Recently Liked ───────────────────────────────────────────────────────────
   matchesCard: {
     backgroundColor: Colors.surface,
     borderRadius: Radius.md,
@@ -451,13 +639,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     borderRadius: Radius.full,
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs,
+    paddingVertical: Spacing.sm,
     flexShrink: 0,
-  },
-  matchBadgeText: {
-    fontSize: Typography.size.xs,
-    fontWeight: Typography.weight.bold,
-    color: Colors.textOnYellow,
   },
 
   // ── CTA Card ─────────────────────────────────────────────────────────────────
@@ -491,6 +674,38 @@ const styles = StyleSheet.create({
     fontSize: Typography.size.sm,
     color: Colors.textOnYellow,
     opacity: 0.72,
+  },
+
+  // ── Empty / Error state text (loading/error full-screen states) ────────────
+  emptyTitle: {
+    fontSize: Typography.size.xl,
+    fontWeight: Typography.weight.bold,
+    color: Colors.textPrimary,
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    fontSize: Typography.size.md,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  refreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginTop: Spacing.base,
+    backgroundColor: Colors.surface,
+    borderWidth: 1.5,
+    borderColor: Colors.borderGold,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+  },
+  refreshBtnText: {
+    fontSize: Typography.size.sm,
+    fontWeight: Typography.weight.semibold,
+    color: Colors.primary,
+    letterSpacing: 0.5,
   },
 
 });
