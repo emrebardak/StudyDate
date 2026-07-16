@@ -197,6 +197,8 @@ Reuse the existing `EmptyState` pattern from `DiscoveryScreen.tsx`:
 - Show an empty/error message when there's no data
 - Handle network retries gracefully
 
+**Never display `error.message` directly.** [`src/lib/errors.ts`](../StudyMatch/src/lib/errors.ts)'s `toFriendlyErrorMessage(error, options)` is the required call at every `setError(...)` site that surfaces a Supabase/PostgREST error to the user — a raw `error.message` can leak Postgres constraint/column names (flagged in a security review, fixed session-wide in the dev log). It maps `23505` (unique_violation, with a per-call-site `duplicateMessage`), `42501` (RLS denial), and network `TypeError`s to friendly strings, with a generic fallback (`fallbackMessage`) for everything else — and always `console.warn`s the real message so it's still visible in Metro/dev tooling. `PostDateSurveyScreen.tsx`'s duplicate-survey handling is the reference example for supplying a context-specific `duplicateMessage`.
+
 ### Progressive Disclosure (Photos)
 
 Currently: photos are overlaid with a semi-opaque `View` + eye-off icon (see `photoOverlay` style in `DiscoveryScreen.tsx`).

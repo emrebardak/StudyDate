@@ -11,6 +11,7 @@ The app is a **React Native CLI project (no Expo)** at `StudyMatch/`, with nativ
 **Backend is in progress, being built incrementally.** Supabase (PostgreSQL, Auth, Realtime, Storage) runs locally via the Supabase CLI (`StudyMatch/supabase/`, Docker-based) — no hosted project yet. Follow [implemention.md](implemention.md) for the phased build order and current progress; don't assume every table/policy described in the PRD exists yet, and don't assume nothing does. Most screens still render mock data defined inline; the **registration flow is wired to the real backend** (see Data layer below) and is the app's current initial route.
 
 ## Standing habits
+- **Ask clarifying questions before coding.** Before starting any nontrivial implementation, ask questions until you are ~95% confident you understand exactly what's being asked — don't fill gaps with assumptions. This applies even when a request sounds simple; if scope, approach, or intent is ambiguous, ask rather than guess. Trivial, unambiguous one-liners (typo fixes, obvious single-line tweaks) don't need this.
 - **Update `docs/development.md`** (session log) and the relevant checklist in `docs/backend-dev.md`/`docs/frontend-dev.md` at the end of any nontrivial chunk of work — not just when asked.
 - **Wire frontend to backend at the end of every phase**, not batched into a separate later task — see `implemention.md`'s per-phase "Frontend wiring" steps.
 

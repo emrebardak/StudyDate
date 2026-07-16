@@ -14,6 +14,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
 import { mapUserFromAPI } from '../data/mappers';
+import { toFriendlyErrorMessage } from '../lib/errors';
 import type { User } from '../types';
 
 // Badge keys per PRD §7 ("Post-Date: Trust Score & Gamification") — awarded via
@@ -33,7 +34,15 @@ function badgeMeta(key: string): { icon: string; label: string } {
 }
 
 // ── Badge Item ─────────────────────────────────────────────────────────────────
-function BadgeItem({ icon, label, count }: { icon: string; label: string; count: number }) {
+function BadgeItem({
+  icon,
+  label,
+  count,
+}: {
+  icon: string;
+  label: string;
+  count: number;
+}) {
   return (
     <View style={styles.badgeItem}>
       <View style={styles.badgeCircle}>
@@ -68,12 +77,16 @@ export default function MyProfileScreen({ navigation }: { navigation: any }) {
         .eq('id', userId)
         .single();
       if (rowError) {
-        setError(rowError.message);
+        setError(toFriendlyErrorMessage(rowError));
         return;
       }
       setUser(mapUserFromAPI(row));
     } catch (e: any) {
-      setError(e?.message ?? 'Failed to load profile.');
+      setError(
+        toFriendlyErrorMessage(e, {
+          fallbackMessage: 'Failed to load profile.',
+        }),
+      );
     } finally {
       setLoading(false);
     }
@@ -91,20 +104,24 @@ export default function MyProfileScreen({ navigation }: { navigation: any }) {
   );
 
   function handleLogOut() {
-    Alert.alert('Log out?', 'You will need to sign in again to access your account.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Log Out',
-        style: 'destructive',
-        onPress: async () => {
-          await supabase.auth.signOut();
-          navigation.reset({
-            index: 0,
-            routes: [{ name: 'RegisterVerification' }],
-          });
+    Alert.alert(
+      'Log out?',
+      'You will need to sign in again to access your account.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Log Out',
+          style: 'destructive',
+          onPress: async () => {
+            await supabase.auth.signOut();
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'RegisterVerification' }],
+            });
+          },
         },
-      },
-    ]);
+      ],
+    );
   }
 
   if (loading && !user) {
@@ -124,7 +141,11 @@ export default function MyProfileScreen({ navigation }: { navigation: any }) {
           <Ionicons name="warning-outline" size={52} color={Colors.textMuted} />
           <Text style={styles.emptyTitle}>Something went wrong</Text>
           <Text style={styles.emptySubtitle}>{error}</Text>
-          <TouchableOpacity style={styles.refreshBtn} onPress={loadProfile} activeOpacity={0.8}>
+          <TouchableOpacity
+            style={styles.refreshBtn}
+            onPress={loadProfile}
+            activeOpacity={0.8}
+          >
             <Ionicons name="refresh-outline" size={16} color={Colors.primary} />
             <Text style={styles.refreshBtnText}>Retry</Text>
           </TouchableOpacity>
@@ -143,8 +164,11 @@ export default function MyProfileScreen({ navigation }: { navigation: any }) {
 
   const photos = user?.photos ?? [];
   const mainPhoto = user?.photoUrl || photos[0];
-  const secondaryPhotos = photos.filter((p) => p !== mainPhoto).slice(0, 2);
-  const morePhotoCount = Math.max(photos.length - (mainPhoto ? 1 : 0) - secondaryPhotos.length, 0);
+  const secondaryPhotos = photos.filter(p => p !== mainPhoto).slice(0, 2);
+  const morePhotoCount = Math.max(
+    photos.length - (mainPhoto ? 1 : 0) - secondaryPhotos.length,
+    0,
+  );
 
   return (
     <View style={styles.root}>
@@ -180,12 +204,18 @@ export default function MyProfileScreen({ navigation }: { navigation: any }) {
           <View style={styles.photoRow}>
             <View style={styles.photoSmall}>
               {!!secondaryPhotos[0] && (
-                <Image source={{ uri: secondaryPhotos[0] }} style={styles.photoImage} />
+                <Image
+                  source={{ uri: secondaryPhotos[0] }}
+                  style={styles.photoImage}
+                />
               )}
             </View>
             <View style={styles.photoSmallRight}>
               {!!secondaryPhotos[1] && (
-                <Image source={{ uri: secondaryPhotos[1] }} style={styles.photoImage} />
+                <Image
+                  source={{ uri: secondaryPhotos[1] }}
+                  style={styles.photoImage}
+                />
               )}
               {/* +N MORE overlay on the second photo, only when there are more */}
               {morePhotoCount > 0 && (
@@ -235,7 +265,12 @@ export default function MyProfileScreen({ navigation }: { navigation: any }) {
               {badgeEntries.map(([key, count]) => {
                 const meta = badgeMeta(key);
                 return (
-                  <BadgeItem key={key} icon={meta.icon} label={meta.label} count={count} />
+                  <BadgeItem
+                    key={key}
+                    icon={meta.icon}
+                    label={meta.label}
+                    count={count}
+                  />
                 );
               })}
             </ScrollView>

@@ -12,6 +12,7 @@ import {
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography } from '../theme';
 import { supabase } from '../lib/supabase';
+import { toFriendlyErrorMessage } from '../lib/errors';
 
 const MAP_IMAGE =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuCKZt0_dZBSxx8Wv0IF1C9jHonv7yU2O-QC0Wcz9IFvmQViUu2XQOvrxmmIoYNnX9i2XaVxpwRB7_8E4vXtSYAv3Cb-13PwrZnSBhUdVkjRKB7zMpBEmzlynqnQw10vQtH8nZ8S4WSDa039NrEoRUrhA85_8y9MN6YE9aasWxw5VOcaC_-FM-wAKN4tNiKB1iANuJY19kRpSZhLYgNyAg5fHM_aASZPigKWrqw_phdu7DA5SGvDqOZ9_esBOV3TxpYMJ7h7nrgSfaw';
@@ -52,13 +53,19 @@ interface TimeSpinnerProps {
 function TimeSpinner({ value, onIncrement, onDecrement }: TimeSpinnerProps) {
   return (
     <View style={styles.timeCol}>
-      <TouchableOpacity onPress={onIncrement} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+      <TouchableOpacity
+        onPress={onIncrement}
+        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+      >
         <Ionicons name="chevron-up" size={20} color={Colors.textSecondary} />
       </TouchableOpacity>
       <View style={styles.timeBox}>
         <Text style={styles.timeValue}>{String(value).padStart(2, '0')}</Text>
       </View>
-      <TouchableOpacity onPress={onDecrement} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+      <TouchableOpacity
+        onPress={onDecrement}
+        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+      >
         <Ionicons name="chevron-down" size={20} color={Colors.textSecondary} />
       </TouchableOpacity>
     </View>
@@ -78,7 +85,9 @@ export default function StudyDatePlannerScreen({
   const [selectedDay, setSelectedDay] = useState(3);
   const [locationSearch, setLocationSearch] = useState('');
   const [selectedLocation] = useState('Main Library, Floor 3');
-  const [selectedTags, setSelectedTags] = useState<string[]>(['Computer Science']);
+  const [selectedTags, setSelectedTags] = useState<string[]>([
+    'Computer Science',
+  ]);
   const [sessionNotes, setSessionNotes] = useState('');
   const [hours, setHours] = useState(14);
   const [minutes, setMinutes] = useState(30);
@@ -107,7 +116,10 @@ export default function StudyDatePlannerScreen({
       cells.push({ day: d, current: true });
     }
     while (cells.length % 7 !== 0) {
-      cells.push({ day: cells.length - daysInMonth - firstDay + 1, current: false });
+      cells.push({
+        day: cells.length - daysInMonth - firstDay + 1,
+        current: false,
+      });
     }
     return cells;
   }, [viewYear, viewMonth]);
@@ -115,24 +127,24 @@ export default function StudyDatePlannerScreen({
   function prevMonth() {
     if (viewMonth === 0) {
       setViewMonth(11);
-      setViewYear((y) => y - 1);
+      setViewYear(y => y - 1);
     } else {
-      setViewMonth((m) => m - 1);
+      setViewMonth(m => m - 1);
     }
   }
 
   function nextMonth() {
     if (viewMonth === 11) {
       setViewMonth(0);
-      setViewYear((y) => y + 1);
+      setViewYear(y => y + 1);
     } else {
-      setViewMonth((m) => m + 1);
+      setViewMonth(m => m + 1);
     }
   }
 
   function toggleTag(tag: string) {
-    setSelectedTags((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+    setSelectedTags(prev =>
+      prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag],
     );
   }
 
@@ -166,7 +178,7 @@ export default function StudyDatePlannerScreen({
           .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
           .maybeSingle();
         if (matchError) {
-          setError(matchError.message);
+          setError(toFriendlyErrorMessage(matchError));
           return;
         }
         matchId = match?.id ?? null;
@@ -176,7 +188,13 @@ export default function StudyDatePlannerScreen({
         return;
       }
 
-      const scheduled = new Date(viewYear, viewMonth, selectedDay, hours, minutes);
+      const scheduled = new Date(
+        viewYear,
+        viewMonth,
+        selectedDay,
+        hours,
+        minutes,
+      );
       const focusSubject = [selectedTags.join(', '), sessionNotes.trim()]
         .filter(Boolean)
         .join(' — ');
@@ -189,12 +207,16 @@ export default function StudyDatePlannerScreen({
         focus_subject: focusSubject || null,
       });
       if (insertError) {
-        setError(insertError.message);
+        setError(toFriendlyErrorMessage(insertError));
         return;
       }
       handleCancel();
     } catch (e: any) {
-      setError(e?.message ?? 'Failed to create the study date.');
+      setError(
+        toFriendlyErrorMessage(e, {
+          fallbackMessage: 'Failed to create the study date.',
+        }),
+      );
     } finally {
       setSaving(false);
     }
@@ -220,13 +242,17 @@ export default function StudyDatePlannerScreen({
       >
         <View style={styles.pageHeader}>
           <Text style={styles.pageTitle}>Plan Session</Text>
-          <Text style={styles.pageSubtitle}>Set location, time, and objectives.</Text>
+          <Text style={styles.pageSubtitle}>
+            Set location, time, and objectives.
+          </Text>
         </View>
 
         <View style={styles.locationCard}>
           <View style={styles.locationCardHeader}>
             <Text style={styles.sectionTitle}>Location</Text>
-            <Text style={styles.sectionSubtitle}>Select a library or cafe.</Text>
+            <Text style={styles.sectionSubtitle}>
+              Select a library or cafe.
+            </Text>
           </View>
 
           <View style={styles.mapWrap}>
@@ -259,7 +285,7 @@ export default function StudyDatePlannerScreen({
 
           <Text style={styles.fieldLabel}>Subject Tags</Text>
           <View style={styles.tagRow}>
-            {SUBJECT_TAGS.map((tag) => {
+            {SUBJECT_TAGS.map(tag => {
               const active = selectedTags.includes(tag);
               return (
                 <TouchableOpacity
@@ -267,7 +293,9 @@ export default function StudyDatePlannerScreen({
                   style={[styles.tag, active && styles.tagActive]}
                   onPress={() => toggleTag(tag)}
                 >
-                  <Text style={[styles.tagText, active && styles.tagTextActive]}>
+                  <Text
+                    style={[styles.tagText, active && styles.tagTextActive]}
+                  >
                     {tag.toUpperCase()}
                   </Text>
                 </TouchableOpacity>
@@ -279,7 +307,9 @@ export default function StudyDatePlannerScreen({
             </TouchableOpacity>
           </View>
 
-          <Text style={[styles.fieldLabel, { marginTop: Spacing.lg }]}>Session Notes</Text>
+          <Text style={[styles.fieldLabel, { marginTop: Spacing.lg }]}>
+            Session Notes
+          </Text>
           <TextInput
             style={styles.notesInput}
             placeholder="What are we focusing on?"
@@ -297,11 +327,25 @@ export default function StudyDatePlannerScreen({
           <View style={styles.calendarHeader}>
             <Text style={styles.calendarMonth}>{monthLabel}</Text>
             <View style={styles.calendarNav}>
-              <TouchableOpacity onPress={prevMonth} style={styles.calendarNavBtn}>
-                <Ionicons name="chevron-back" size={18} color={Colors.textSecondary} />
+              <TouchableOpacity
+                onPress={prevMonth}
+                style={styles.calendarNavBtn}
+              >
+                <Ionicons
+                  name="chevron-back"
+                  size={18}
+                  color={Colors.textSecondary}
+                />
               </TouchableOpacity>
-              <TouchableOpacity onPress={nextMonth} style={styles.calendarNavBtn}>
-                <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+              <TouchableOpacity
+                onPress={nextMonth}
+                style={styles.calendarNavBtn}
+              >
+                <Ionicons
+                  name="chevron-forward"
+                  size={18}
+                  color={Colors.textSecondary}
+                />
               </TouchableOpacity>
             </View>
           </View>
@@ -370,7 +414,11 @@ export default function StudyDatePlannerScreen({
               <ActivityIndicator color={Colors.background} size="small" />
             ) : (
               <>
-                <Ionicons name="calendar-outline" size={18} color={Colors.background} />
+                <Ionicons
+                  name="calendar-outline"
+                  size={18}
+                  color={Colors.background}
+                />
                 <Text style={styles.createBtnText}>Create Date</Text>
               </>
             )}

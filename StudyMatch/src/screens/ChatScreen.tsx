@@ -17,6 +17,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
 import { mapMessageFromAPI } from '../data/mappers';
+import { toFriendlyErrorMessage } from '../lib/errors';
 import type { Message } from '../types';
 
 const { width } = Dimensions.get('window');
@@ -149,7 +150,7 @@ export default function ChatScreen({
           .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
           .maybeSingle();
         if (matchError) {
-          setError(matchError.message);
+          setError(toFriendlyErrorMessage(matchError));
           return;
         }
         resolvedMatchId = match?.id ?? null;
@@ -173,7 +174,7 @@ export default function ChatScreen({
         .eq('id', resolvedMatchId)
         .single();
       if (matchRowError) {
-        setError(matchRowError.message);
+        setError(toFriendlyErrorMessage(matchRowError));
         return;
       }
       const partnerId =
@@ -191,7 +192,7 @@ export default function ChatScreen({
         .eq('match_id', resolvedMatchId)
         .order('created_at', { ascending: true });
       if (msgError) {
-        setError(msgError.message);
+        setError(toFriendlyErrorMessage(msgError));
         return;
       }
       setMessages((rows ?? []).map(mapMessageFromAPI));
@@ -232,7 +233,9 @@ export default function ChatScreen({
         setEligibleSurvey(null);
       }
     } catch (e: any) {
-      setError(e?.message ?? 'Failed to load chat.');
+      setError(
+        toFriendlyErrorMessage(e, { fallbackMessage: 'Failed to load chat.' }),
+      );
     } finally {
       setLoading(false);
     }
@@ -259,14 +262,18 @@ export default function ChatScreen({
         .select()
         .single();
       if (insertError) {
-        setError(insertError.message);
+        setError(toFriendlyErrorMessage(insertError));
         return;
       }
       setMessages(prev => [...prev, mapMessageFromAPI(row)]);
       setInputText('');
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
     } catch (e: any) {
-      setError(e?.message ?? 'Failed to send message.');
+      setError(
+        toFriendlyErrorMessage(e, {
+          fallbackMessage: 'Failed to send message.',
+        }),
+      );
     } finally {
       setSending(false);
     }
@@ -291,7 +298,7 @@ export default function ChatScreen({
               .update({ status: 'terminated' })
               .eq('id', matchId);
             if (endError) {
-              setError(endError.message);
+              setError(toFriendlyErrorMessage(endError));
               return;
             }
             navigation.navigate('MainTabs');

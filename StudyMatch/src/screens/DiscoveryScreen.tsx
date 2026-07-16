@@ -15,11 +15,12 @@ import { Colors, Spacing, Radius, Typography } from '../theme';
 import type { DiscoveryFilters, User } from '../types';
 import { supabase } from '../lib/supabase';
 import { mapUserFromAPI } from '../data/mappers';
+import { toFriendlyErrorMessage } from '../lib/errors';
 
 const { width, height } = Dimensions.get('window');
 
-const CARD_WIDTH  = width - Spacing.base * 2;
-const CARD_HEIGHT = Math.min(Math.round(height * 0.60), 510);
+const CARD_WIDTH = width - Spacing.base * 2;
+const CARD_HEIGHT = Math.min(Math.round(height * 0.6), 510);
 const PHOTO_HEIGHT = Math.round(CARD_HEIGHT * 0.55);
 
 const SWIPE_THRESHOLD = width * 0.45;
@@ -39,7 +40,11 @@ function EmptyState({ onRefresh }: { onRefresh: () => void }) {
       <Text style={styles.emptySubtitle}>
         Check back later for new study partners.
       </Text>
-      <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh} activeOpacity={0.8}>
+      <TouchableOpacity
+        style={styles.refreshBtn}
+        onPress={onRefresh}
+        activeOpacity={0.8}
+      >
         <Ionicons name="refresh-outline" size={16} color={Colors.primary} />
         <Text style={styles.refreshBtnText}>Refresh</Text>
       </TouchableOpacity>
@@ -56,7 +61,13 @@ function LoadingState() {
   );
 }
 
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+function ErrorState({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
   return (
     <View style={styles.emptyContainer}>
       <View style={styles.emptyIconWrap}>
@@ -64,7 +75,11 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
       </View>
       <Text style={styles.emptyTitle}>Something went wrong</Text>
       <Text style={styles.emptySubtitle}>{message}</Text>
-      <TouchableOpacity style={styles.refreshBtn} onPress={onRetry} activeOpacity={0.8}>
+      <TouchableOpacity
+        style={styles.refreshBtn}
+        onPress={onRetry}
+        activeOpacity={0.8}
+      >
         <Ionicons name="refresh-outline" size={16} color={Colors.primary} />
         <Text style={styles.refreshBtnText}>Retry</Text>
       </TouchableOpacity>
@@ -85,7 +100,11 @@ function LockedState({ onGoToChat }: { onGoToChat: () => void }) {
       <Text style={styles.emptySubtitle}>
         Finish up or end your current match before finding a new partner.
       </Text>
-      <TouchableOpacity style={styles.refreshBtn} onPress={onGoToChat} activeOpacity={0.8}>
+      <TouchableOpacity
+        style={styles.refreshBtn}
+        onPress={onGoToChat}
+        activeOpacity={0.8}
+      >
         <Ionicons name="chatbubble-outline" size={16} color={Colors.primary} />
         <Text style={styles.refreshBtnText}>Go to Chat</Text>
       </TouchableOpacity>
@@ -99,7 +118,6 @@ function CardFace({ profile }: { profile: User }) {
     <>
       {/* ── Photo area ── */}
       <View style={styles.photoArea}>
-
         {/* Placeholder fill — real photos stay blurred until mutual reveal (PRD §5);
             progressive-disclosure photo wiring is a later phase, not this one. */}
         <View style={styles.photoPlaceholder}>
@@ -117,19 +135,26 @@ function CardFace({ profile }: { profile: User }) {
           <View style={styles.tagsRow}>
             {!!profile.university && (
               <View style={styles.tagDark}>
-                <Text style={styles.tagDarkText}>{profile.university.toUpperCase()}</Text>
+                <Text style={styles.tagDarkText}>
+                  {profile.university.toUpperCase()}
+                </Text>
               </View>
             )}
             {!!profile.year && (
               <View style={styles.tagGold}>
-                <Text style={styles.tagGoldText}>{profile.year.toUpperCase()}</Text>
+                <Text style={styles.tagGoldText}>
+                  {profile.year.toUpperCase()}
+                </Text>
               </View>
             )}
           </View>
-          <Text style={styles.profileName}>{profile.name || 'Anonymous Scholar'}</Text>
-          <Text style={styles.profileField}>{profile.department || 'Undeclared Department'}</Text>
+          <Text style={styles.profileName}>
+            {profile.name || 'Anonymous Scholar'}
+          </Text>
+          <Text style={styles.profileField}>
+            {profile.department || 'Undeclared Department'}
+          </Text>
         </View>
-
       </View>
 
       {/* ── Bio section — today's focus goal (PRD §3 "Today's Goal") ── */}
@@ -146,11 +171,17 @@ function CardFace({ profile }: { profile: User }) {
 }
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
-export default function DiscoveryScreen({ navigation, route }: { navigation: any; route: any }) {
+export default function DiscoveryScreen({
+  navigation,
+  route,
+}: {
+  navigation: any;
+  route: any;
+}) {
   const [deckIndex, setDeckIndex] = useState(0);
-  const [activeFilters, setActiveFilters] = useState<DiscoveryFilters | undefined>(
-    route?.params?.filters,
-  );
+  const [activeFilters, setActiveFilters] = useState<
+    DiscoveryFilters | undefined
+  >(route?.params?.filters);
   const [candidates, setCandidates] = useState<User[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -214,7 +245,7 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
         .eq('id', userId)
         .single();
       if (ownError) {
-        setError(ownError.message);
+        setError(toFriendlyErrorMessage(ownError));
         return;
       }
       if (ownRow?.active_match_id) {
@@ -232,13 +263,17 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
         .is('active_match_id', null)
         .limit(CANDIDATE_BATCH_SIZE);
       if (candidatesError) {
-        setError(candidatesError.message);
+        setError(toFriendlyErrorMessage(candidatesError));
         return;
       }
       setCandidates((rows ?? []).map(mapUserFromAPI));
       setDeckIndex(0);
     } catch (e: any) {
-      setError(e?.message ?? 'Failed to load Discovery.');
+      setError(
+        toFriendlyErrorMessage(e, {
+          fallbackMessage: 'Failed to load Discovery.',
+        }),
+      );
     } finally {
       setLoading(false);
     }
@@ -289,12 +324,22 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
       .channel(`discovery-lock-${currentUserId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'matches', filter: `user1_id=eq.${currentUserId}` },
+        {
+          event: '*',
+          schema: 'public',
+          table: 'matches',
+          filter: `user1_id=eq.${currentUserId}`,
+        },
         handleMatchChange,
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'matches', filter: `user2_id=eq.${currentUserId}` },
+        {
+          event: '*',
+          schema: 'public',
+          table: 'matches',
+          filter: `user2_id=eq.${currentUserId}`,
+        },
         handleMatchChange,
       )
       .subscribe();
@@ -305,7 +350,7 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
   }, [currentUserId, navigation, loadDiscovery]);
 
   function onSwipeComplete() {
-    setDeckIndex((i) => i + 1);
+    setDeckIndex(i => i + 1);
   }
 
   function forceSwipe(direction: 'left' | 'right') {
@@ -348,10 +393,15 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
   // actually wrong, so it's surfaced via a non-blocking banner instead of being
   // swallowed; a null currentUserId additionally re-runs loadDiscovery() to
   // re-resolve auth state and surface the real "Not signed in" ErrorState.
-  async function recordSwipe(candidate: User | undefined, direction: 'left' | 'right') {
+  async function recordSwipe(
+    candidate: User | undefined,
+    direction: 'left' | 'right',
+  ) {
     if (!candidate) return;
     if (!currentUserId) {
-      console.warn('Failed to record swipe: no signed-in user (stale/expired session).');
+      console.warn(
+        'Failed to record swipe: no signed-in user (stale/expired session).',
+      );
       showSwipeErrorBanner("Couldn't save that — please sign in again.");
       loadDiscovery();
       return;
@@ -361,7 +411,9 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
       .insert({ swiper_id: currentUserId, target_id: candidate.id, direction });
     if (swipeError) {
       if (swipeError.code === '23505') {
-        console.warn('Swipe already recorded for this candidate (stale local deck).');
+        console.warn(
+          'Swipe already recorded for this candidate (stale local deck).',
+        );
         return;
       }
       console.warn('Failed to record swipe:', swipeError.message);
@@ -372,11 +424,11 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
   const panGesture = useRef(
     Gesture.Pan()
       .runOnJS(true)
-      .onUpdate((e) => {
+      .onUpdate(e => {
         if (isAnimating.current) return;
         position.setValue({ x: e.translationX, y: e.translationY });
       })
-      .onEnd((e) => {
+      .onEnd(e => {
         if (isAnimating.current) return;
         if (e.translationX > SWIPE_THRESHOLD) {
           const candidate = candidates[deckIndex];
@@ -441,10 +493,8 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
 
     return (
       <View style={styles.cardContainer}>
-
         {/* Deck */}
         <View style={styles.deckWrap}>
-
           {/* Next card (behind) */}
           {nextProfile && (
             <Animated.View
@@ -477,25 +527,31 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
 
               {/* CONNECT stamp — fades in on right drag */}
               <Animated.View
-                style={[styles.stamp, styles.stampConnect, { opacity: connectOpacity }]}
+                style={[
+                  styles.stamp,
+                  styles.stampConnect,
+                  { opacity: connectOpacity },
+                ]}
               >
                 <Text style={styles.stampConnectText}>CONNECT ✓</Text>
               </Animated.View>
 
               {/* PASS stamp — fades in on left drag */}
               <Animated.View
-                style={[styles.stamp, styles.stampPass, { opacity: passOpacity }]}
+                style={[
+                  styles.stamp,
+                  styles.stampPass,
+                  { opacity: passOpacity },
+                ]}
               >
                 <Text style={styles.stampPassText}>PASS ✗</Text>
               </Animated.View>
             </Animated.View>
           </GestureDetector>
-
         </View>
 
         {/* Action buttons */}
         <View style={styles.actionsRow}>
-
           {/* Pass — X */}
           <TouchableOpacity
             style={styles.btnPass}
@@ -511,7 +567,11 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
 
           {/* Bookmark */}
           <TouchableOpacity style={styles.btnBookmark} activeOpacity={0.8}>
-            <Ionicons name="bookmark-outline" size={22} color={Colors.textPrimary} />
+            <Ionicons
+              name="bookmark-outline"
+              size={22}
+              color={Colors.textPrimary}
+            />
           </TouchableOpacity>
 
           {/* Like — primary CTA */}
@@ -526,7 +586,6 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
           >
             <Ionicons name="heart" size={28} color={Colors.textOnYellow} />
           </TouchableOpacity>
-
         </View>
       </View>
     );
@@ -534,7 +593,6 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
 
   return (
     <View style={styles.root}>
-
       {/* ── Header ── */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
@@ -545,7 +603,9 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
           <TouchableOpacity
             style={styles.filterBtn}
             activeOpacity={0.8}
-            onPress={() => navigation.navigate('Filter', { current: activeFilters })}
+            onPress={() =>
+              navigation.navigate('Filter', { current: activeFilters })
+            }
           >
             <Ionicons name="options-outline" size={20} color={Colors.primary} />
             {activeFilters && <View style={styles.filterDot} />}
@@ -562,18 +622,20 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
       {/* ── Swipe-save failure toast ── */}
       {swipeErrorBanner && (
         <View style={styles.swipeErrorBanner} pointerEvents="none">
-          <Ionicons name="alert-circle-outline" size={16} color={Colors.textOnYellow} />
+          <Ionicons
+            name="alert-circle-outline"
+            size={16}
+            color={Colors.textOnYellow}
+          />
           <Text style={styles.swipeErrorBannerText}>{swipeErrorBanner}</Text>
         </View>
       )}
-
     </View>
   );
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-
   root: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -902,5 +964,4 @@ const styles = StyleSheet.create({
     fontWeight: Typography.weight.semibold,
     color: Colors.textOnYellow,
   },
-
 });

@@ -5,6 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { View, StyleSheet, ActivityIndicator } from 'react-native';
 import { supabase } from '../lib/supabase';
+import { profileRowToRegistrationData } from '../data/mappers';
 
 import DashboardScreen from '../screens/DashboardScreen';
 import DiscoveryScreen from '../screens/DiscoveryScreen';
@@ -20,9 +21,10 @@ import RegisterProfileScreen from '../screens/RegisterProfileScreen';
 import RegisterTraitsScreen from '../screens/RegisterTraitsScreen';
 import RegisterFinalScreen from '../screens/RegisterFinalScreen';
 import PostDateSurveyScreen from '../screens/PostDateSurveyScreen';
+import MatchFoundScreen from '../screens/MatchFoundScreen';
 
 import { Colors, Typography, Spacing } from '../theme';
-import type { RootStackParamList, TabParamList } from '../types';
+import type { RootStackParamList, TabParamList, RegistrationData } from '../types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<TabParamList>();
@@ -50,9 +52,7 @@ function MainTabs() {
           };
           const map = icons[route.name];
           const iconName = focused ? map.active : map.inactive;
-          return (
-            <Ionicons name={iconName as any} size={size} color={color} />
-          );
+          return <Ionicons name={iconName as any} size={size} color={color} />;
         },
       })}
     >
@@ -70,11 +70,50 @@ export default function AppNavigator() {
   // Resolves once on mount: an existing session skips straight to MainTabs instead
   // of always landing on RegisterVerification. initialRouteName only applies at the
   // Stack.Navigator's first mount, so we hold off rendering it until this is known.
-  const [initialRoute, setInitialRoute] = useState<'RegisterVerification' | 'MainTabs' | null>(null);
+  const [initialRoute, setInitialRoute] = useState<
+    'RegisterVerification' | 'MainTabs' | 'RegisterProfile' | null
+  >(null);
+  // Only populated when resuming an incomplete registration (see below).
+  const [pendingProfileData, setPendingProfileData] = useState<
+    Partial<RegistrationData> | undefined
+  >(undefined);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setInitialRoute(data.session ? 'MainTabs' : 'RegisterVerification');
+    supabase.auth.getSession().then(async ({ data }) => {
+      const session = data.session;
+      if (!session) {
+        setInitialRoute('RegisterVerification');
+        return;
+      }
+
+      // A session alone doesn't mean registration ever finished — Step 4's
+      // "Complete Archive" is the only step that actually writes to
+      // public.users, so a user who quit at Step 1-3 has a session but a
+      // blank profile row. `name` is the first field Step 2 collects, so its
+      // absence reliably signals an incomplete profile without a new column.
+      const { data: row, error } = await supabase
+        .from('users')
+        .select('name, university, department, current_tags, current_goal_text')
+        .eq('id', session.user.id)
+        .single();
+
+      if (error) {
+        // Fail open on a transient fetch error — don't block an already-
+        // registered user from the app over a network hiccup; this matches
+        // the prior (session-only) behavior when the check itself fails.
+        setInitialRoute('MainTabs');
+        return;
+      }
+
+      if (!row?.name) {
+        setPendingProfileData(
+          profileRowToRegistrationData(row, session.user.email ?? undefined),
+        );
+        setInitialRoute('RegisterProfile');
+        return;
+      }
+
+      setInitialRoute('MainTabs');
     });
   }, []);
 
@@ -95,13 +134,21 @@ export default function AppNavigator() {
           animation: 'slide_from_right',
         }}
       >
-        <Stack.Screen name="RegisterVerification" component={RegisterVerificationScreen} />
-        <Stack.Screen name="RegisterProfile" component={RegisterProfileScreen} />
+        <Stack.Screen
+          name="RegisterVerification"
+          component={RegisterVerificationScreen}
+        />
+        <Stack.Screen
+          name="RegisterProfile"
+          component={RegisterProfileScreen}
+          initialParams={{ data: pendingProfileData ?? {} }}
+        />
         <Stack.Screen name="RegisterTraits" component={RegisterTraitsScreen} />
         <Stack.Screen name="RegisterFinal" component={RegisterFinalScreen} />
         <Stack.Screen name="MainTabs" component={MainTabs} />
         <Stack.Screen name="Chat" component={ChatScreen} />
         <Stack.Screen name="StudentProfile" component={StudentProfileScreen} />
+        <Stack.Screen name="MatchFound" component={MatchFoundScreen} />
         <Stack.Screen name="EditProfile" component={EditProfileScreen} />
         <Stack.Screen name="Filter" component={FilterScreen} />
         <Stack.Screen

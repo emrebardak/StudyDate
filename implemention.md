@@ -53,7 +53,7 @@ This is the core of "where can they be stored": accounts live in Supabase's buil
 - **Frontend wiring**: `DiscoveryScreen.tsx` reads from `discoverable_users` instead of raw `public.users` (so shadowbanned users are actually excluded). Subscribe to the `matches` Realtime channel so both users' Discovery screens lock/unlock live the instant a match forms, replacing the current static mock lock state — this is the actual Lock System, not a placeholder. **[DONE — mock `PROFILES` array removed; real swipe-to-insert completes the piece Phase 3 deferred; one Realtime subscription (not a special-cased post-insert navigate) drives lock/unlock for both participants; new `LockedState` implements the "you're already in a study date" UI]**
 
 ### Phase 5 — Business logic: trust score + match timeout **[DONE — see docs/development.md Session 14]**
-- **Migration 14** (`post_date_surveys.sql`): `public.post_date_surveys` table (dedup via `UNIQUE(study_date_id, reviewer_id)`, not a separate audit table) + `submit_post_date_survey(study_date_id, met, environment, badge)` RPC — atomic, floor-clamped. **[DONE — deliberately NOT a standalone `apply_trust_delta(user_id, delta)` RPC as originally planned: that shape (arbitrary target + arbitrary signed delta, both client-supplied) would let any authenticated client forge anyone's trust_score. The delta is fixed constants computed inline, and target is derived server-side. Also: only the `+2`/`-25` tiers are implemented — the PRD's `-10` last-minute-cancel tier has no attribution mechanism anywhere in the schema and no "last-minute" definition, flagged as a deferred gap rather than guessed at]**
+- **Migration 14** (`post_date_surveys.sql`): `public.post_date_surveys` table (dedup via `UNIQUE(study_date_id, reviewer_id)`, not a separate audit table) + `submit_post_date_survey(study_date_id, met, environment, badge)` RPC — atomic, floor-clamped. **[DONE — deliberately NOT a standalone `apply_trust_delta(user_id, delta)` RPC as originally planned: that shape (arbitrary target + arbitrary signed delta, both client-supplied) would let any authenticated client forge anyone's trust_score. The delta is fixed constants computed inline, and target is derived server-side. Also: only the `+2`/`-25` tiers were implemented here — the PRD's `-10` last-minute-cancel tier had no attribution mechanism anywhere in the schema and no "last-minute" definition, flagged as a deferred gap rather than guessed at. **Closed in Session 18**: `last_minute_cancellation.sql` adds a dedicated `cancel_study_date()` RPC (chosen over 2 other proposed designs — a trigger-driven direct UPDATE, and a survey-only extension with no objective timestamp rule) + a guard trigger blocking direct client writes to the new `cancelled_by`/`cancelled_at` columns, plus a companion fix to `submit_post_date_survey` closing a double-penalty vector the cancellation concept newly opened up. No frontend UI yet — flagged as still open, see development.md Session 18]**
 - **Migration 15** (`match_timeout_cron.sql`): match-timeout sweep as a `pg_cron` job. **[DONE — `pg_cron` availability verified empirically against the local Docker stack (already in `shared_preload_libraries`) before writing the migration, not assumed. Reuses the existing Lock System trigger (`sync_active_match_id()`) for the unlock instead of duplicating that logic]**
 - **Verify**: manually backdate a test match's `updated_at`; invoke the sweep function directly and confirm status flips to `expired` and both users' `active_match_id` clear together. **[DONE, plus confirmed a match with a recent message does NOT expire despite an equally stale `updated_at`]**
 - **Frontend wiring**: build the post-date survey UI (3 quick questions from PRD §7) that calls the survey RPC via `supabase.rpc(...)`; profile screens show real badge counts from `public.users.badges` instead of mock data; a match expiring via the cron sweep is reflected live through the Phase 4 Realtime subscription (Discovery unlocks automatically, no app restart needed). **[DONE — new `PostDateSurveyScreen.tsx` (modal) + a survey-eligibility banner in `ChatScreen.tsx`; `MyProfileScreen.tsx` already read real `badges` since Session 13, this phase is what starts populating it; the Realtime unlock path was already proven working in Phase 4/Session 7 and is unmodified by this phase]**
@@ -71,6 +71,61 @@ If a future phase does need an Edge Function, prefer a **Database Webhook** (dec
 - `npx supabase link --project-ref <ref>`, then `npx supabase db push` to apply all local migrations to the hosted DB.
 - Re-verify the `.edu` gate mechanism against the hosted project's actual Auth version, since hosted may differ from the local Docker image.
 - **Frontend wiring**: swap the Supabase client singleton's local URL/anon key for the hosted project's values (e.g. via env config) — no other frontend code changes, since all prior phases already wired against the same `supabase-js` client interface.
+
+### Phase 7 — Recommendation & filter-based matching for Discovery (planned, not started)
+
+#### Context
+Discovery currently shows `discoverable_users` candidates in whatever order the view returns — no ranking, no filtering. Two things have sat unfinished:
+- `FilterScreen.tsx` has a full filter UI (`DiscoveryFilters`: institution, university, departments, distance, age range) that **round-trips through navigation params but was never wired to the Discovery query** — selecting filters currently does nothing.
+- Session 11 deliberately **removed** a fake "98% match" percentage badge from the Dashboard because there was no real algorithm behind it, flagging that a genuine one could bring it back later.
+
+This phase builds both: real filters that actually restrict who shows up, and a real compatibility-scoring algorithm that ranks who shows up first.
+
+**Confirmed decisions (asked directly, not assumed):**
+- **Both filtering and ranking** — filters narrow the candidate pool; a match-score orders it.
+- **Show the score on Discovery cards** — a real number, following Session 11's precedent.
+- **Scoring computed in SQL**, inside the `discoverable_users` view, not client-side.
+- **Real age via a new `birthdate` column** — the existing "age range" filter becomes functional. No new native dependency (a plain day/month/year numeric input in `EditProfileScreen.tsx`, not a native date-picker library).
+- **Distance becomes "same city"** via the existing `city` column, not real GPS. Real lat/lng distance would need a new native geolocation dependency + permissions flow — the same cost/risk class this project explicitly deferred for photo uploads in Session 13. Asked directly; user chose the no-native-dependency path.
+
+#### Migration: extend `discoverable_users` + add `birthdate`
+One new migration (`StudyMatch/supabase/migrations/<ts>_recommendation_scoring.sql`):
+- `ALTER TABLE public.users ADD COLUMN birthdate DATE;` — nullable, not backfilled.
+- `CREATE OR REPLACE VIEW public.discoverable_users` (keeps every existing Session 7/8 predicate — `trust_score >= 60`, `active_match_id IS NULL`, not-already-swiped, explicit column list excluding `email`/`verification_code`) and **adds**:
+  - `age` — `date_part('year', age(birthdate))::int`, `NULL` if unset. Raw `birthdate` is **not** exposed on the view (same privacy-by-default precedent as excluding `email`/`verification_code`).
+  - `same_city` — `boolean`, computed via a self-join to the *caller's own* row (`(SELECT city FROM public.users WHERE id = auth.uid())`), `NULL`-safe. Same "`auth.uid()` re-evaluates per caller inside a non-`security_invoker` view" technique Session 8 already proved correct for the swipe-history exclusion, now used for a viewer-relative *column* instead of a `WHERE`/`NOT EXISTS`.
+  - `match_score` — `integer`, 0-100, viewer-relative, same self-join. Weighted, named-constant point system (mirrors the trust-score point-value documentation convention):
+
+    | Signal | Points |
+    |---|---|
+    | Same `department` | 30 |
+    | Same `university` | 15 |
+    | Same city | 10 |
+    | Each shared `current_tags` entry | 8, capped at 5 shared (max 40) |
+    | Same `study_pacing` | 10 |
+    | Same `audio_environment` | 5 |
+    | Same `study_fuel` | 5 |
+
+    Summed, then `LEAST(100, ...)` clamped. All factors additive-only (no penalties) — zero known overlap scores 0, never negative.
+- **NULL-safety, must be explicit, not implicit**: fresh column, no backfill — every existing user's `birthdate`/`age` is `NULL` today, `city` likely unset for most. `age`/`same_city` filters and `match_score` contributions from either must **never silently zero out the whole Discovery deck**. Age/city always contribute `0` to the score (not exclude) when unknown on either side; frontend age/city filters only exclude when the user has actively set them.
+
+#### Frontend: wire the filters for real, add the score badge
+- **`src/types/index.ts`**: `DiscoveryFilters.distance: number` → `sameCityOnly: boolean` (breaking, but `FilterScreen.tsx`/`DiscoveryScreen.tsx` are its only two consumers). Add `DiscoveryCandidate` type (`User` + `age?: number`, `sameCity?: boolean`, `matchScore: number`) — a candidate's ranked view is a different shape than "your own profile," don't overload `User`.
+- **`src/data/mappers.ts`**: new `mapDiscoveryCandidateFromAPI(row)` alongside the existing `mapUserFromAPI`.
+- **`src/screens/DiscoveryScreen.tsx`**: `loadDiscovery()` currently doesn't consume `route.params.filters` at all — add it. Chain PostgREST filters onto the `discoverable_users` query (`.eq('university', ...)`, `.in('department', ...)`, `.gte('age', ...)`, `.lte('age', ...)`, `.eq('same_city', true)` when `sameCityOnly`), each only applied when actually set — and `.order('match_score', { ascending: false })`. `CardFace` gains a small "`{score}% Match`" badge (existing theme tokens only).
+- **`src/screens/FilterScreen.tsx`**: replace the (mock, unwired) distance slider with a "Same city only" toggle; wire university/department/age-range fields to actually populate `DiscoveryFilters` for the first time.
+- **`src/screens/EditProfileScreen.tsx`**: add a birthdate field (day/month/year numeric inputs, composed into a real `DATE`) and a plain `city` text input if not already present, both in the existing `handleSave` UPDATE payload.
+
+#### Files to change
+- **New**: `StudyMatch/supabase/migrations/<ts>_recommendation_scoring.sql`
+- **Edit**: `src/types/index.ts`, `src/data/mappers.ts`, `src/screens/DiscoveryScreen.tsx`, `src/screens/FilterScreen.tsx`, `src/screens/EditProfileScreen.tsx`
+
+#### Verify
+1. **SQL-level**: confirm `match_score`/`age`/`same_city` are genuinely viewer-relative (same candidate, different values as seen by two different callers); confirm a candidate with `birthdate`/`city` both `NULL` still appears with a score reflecting only known signals (not excluded, not crashing); confirm `LEAST(100, ...)` clamps a maximal-overlap synthetic case.
+2. **REST-level**, mirroring `DiscoveryScreen.tsx`'s exact query shape: varied department/university/tags/study-habit overlap → ordering matches expected ranking; each filter individually confirmed correct and NULL-safe (an unset filter never excludes anyone).
+3. `npx supabase db reset` — new migration replays clean alongside all prior ones.
+4. `npx tsc --noEmit` — 0 errors.
+5. On-device verification — same standing limitation as every session since 12.
 
 ## Files to be created
 - `StudyMatch/supabase/config.toml` (from `supabase init`)

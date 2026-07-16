@@ -12,9 +12,23 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography } from '../theme';
 import { supabase } from '../lib/supabase';
 import { mapUserFromAPI } from '../data/mappers';
+import { toFriendlyErrorMessage } from '../lib/errors';
 import type { User } from '../types';
 
-const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+const MONTHS = [
+  'JAN',
+  'FEB',
+  'MAR',
+  'APR',
+  'MAY',
+  'JUN',
+  'JUL',
+  'AUG',
+  'SEP',
+  'OCT',
+  'NOV',
+  'DEC',
+];
 
 interface UpcomingSession {
   id: string;
@@ -35,7 +49,10 @@ interface LikedProfile {
 }
 
 function formatSessionTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return new Date(iso).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 // ── Session Row ───────────────────────────────────────────────────────────────
@@ -58,7 +75,11 @@ function SessionRow({ session }: { session: UpcomingSession }) {
           <Text style={styles.sessionMetaText}>{session.timeLabel}</Text>
         </View>
         <View style={styles.sessionMeta}>
-          <Ionicons name="location-outline" size={12} color={Colors.textMuted} />
+          <Ionicons
+            name="location-outline"
+            size={12}
+            color={Colors.textMuted}
+          />
           <Text style={styles.sessionMetaText} numberOfLines={1}>
             {session.location}
           </Text>
@@ -75,7 +96,9 @@ function SessionRow({ session }: { session: UpcomingSession }) {
 
 // ── Liked Row ─────────────────────────────────────────────────────────────────
 function LikedRow({ profile }: { profile: LikedProfile }) {
-  const subtitle = [profile.dept, profile.university].filter(Boolean).join(' · ');
+  const subtitle = [profile.dept, profile.university]
+    .filter(Boolean)
+    .join(' · ');
   return (
     <View style={styles.matchRow}>
       <View style={styles.matchAvatar}>
@@ -101,7 +124,9 @@ function LikedRow({ profile }: { profile: LikedProfile }) {
 // ── Main Screen ───────────────────────────────────────────────────────────────
 export default function DashboardScreen({ navigation }: { navigation: any }) {
   const [user, setUser] = useState<User | null>(null);
-  const [upcomingSessions, setUpcomingSessions] = useState<UpcomingSession[]>([]);
+  const [upcomingSessions, setUpcomingSessions] = useState<UpcomingSession[]>(
+    [],
+  );
   const [likedProfiles, setLikedProfiles] = useState<LikedProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -128,7 +153,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
         .eq('id', userId)
         .single();
       if (ownError) {
-        setError(ownError.message);
+        setError(toFriendlyErrorMessage(ownError));
         return;
       }
       const me = mapUserFromAPI(ownRow);
@@ -167,7 +192,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
           .limit(5);
 
         setUpcomingSessions(
-          (dateRows ?? []).map((row) => {
+          (dateRows ?? []).map(row => {
             const d = new Date(row.scheduled_time);
             return {
               id: row.id,
@@ -193,17 +218,26 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
         .limit(5);
 
       if (likedRows?.length) {
-        const targetIds = likedRows.map((r) => r.target_id);
+        const targetIds = likedRows.map(r => r.target_id);
         const { data: likedUsers } = await supabase
           .from('users')
           .select('id, name, department, university')
           .in('id', targetIds);
-        const byId = new Map((likedUsers ?? []).map((u) => [u.id, u]));
+        const byId = new Map((likedUsers ?? []).map(u => [u.id, u]));
         setLikedProfiles(
           likedRows
-            .map((r) => byId.get(r.target_id))
-            .filter((u): u is { id: string; name: string; department: string; university: string } => !!u)
-            .map((u) => ({
+            .map(r => byId.get(r.target_id))
+            .filter(
+              (
+                u,
+              ): u is {
+                id: string;
+                name: string;
+                department: string;
+                university: string;
+              } => !!u,
+            )
+            .map(u => ({
               id: u.id,
               name: u.name || 'Anonymous Scholar',
               dept: u.department || '',
@@ -215,7 +249,11 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
         setLikedProfiles([]);
       }
     } catch (e: any) {
-      setError(e?.message ?? 'Failed to load dashboard.');
+      setError(
+        toFriendlyErrorMessage(e, {
+          fallbackMessage: 'Failed to load dashboard.',
+        }),
+      );
     } finally {
       setLoading(false);
     }
@@ -253,7 +291,11 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
           <Ionicons name="warning-outline" size={52} color={Colors.textMuted} />
           <Text style={styles.emptyTitle}>Something went wrong</Text>
           <Text style={styles.emptySubtitle}>{error}</Text>
-          <TouchableOpacity style={styles.refreshBtn} onPress={loadDashboard} activeOpacity={0.8}>
+          <TouchableOpacity
+            style={styles.refreshBtn}
+            onPress={loadDashboard}
+            activeOpacity={0.8}
+          >
             <Ionicons name="refresh-outline" size={16} color={Colors.primary} />
             <Text style={styles.refreshBtnText}>Retry</Text>
           </TouchableOpacity>
@@ -264,7 +306,6 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
 
   return (
     <View style={styles.root}>
-
       {/* ── Header ── */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
@@ -282,7 +323,6 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-
         {/* Hero */}
         <Text style={styles.heroTitle}>Welcome back, {firstName}.</Text>
         <Text style={styles.heroSubtitle}>
@@ -291,7 +331,6 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
 
         {/* ── Upcoming Sessions Card ── */}
         <View style={styles.upcomingCard}>
-
           {/* Card header row */}
           <View style={styles.upcomingCardHeader}>
             <Text style={styles.cardTitle}>Upcoming Sessions</Text>
@@ -302,7 +341,9 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
 
           {/* Session rows */}
           {upcomingSessions.length === 0 ? (
-            <Text style={styles.emptySectionText}>No upcoming sessions planned yet.</Text>
+            <Text style={styles.emptySectionText}>
+              No upcoming sessions planned yet.
+            </Text>
           ) : (
             upcomingSessions.map((s, idx) => (
               <React.Fragment key={s.id}>
@@ -320,7 +361,6 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
           >
             <Text style={styles.viewScheduleText}>View Full Schedule</Text>
           </TouchableOpacity>
-
         </View>
 
         {/* ── Recently Liked ── */}
@@ -331,8 +371,11 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
 
         <View style={styles.matchesCard}>
           {likedProfiles.length === 0 ? (
-            <Text style={[styles.emptySectionText, styles.emptySectionTextPadded]}>
-              You haven't liked anyone yet — head to Match to find a study partner.
+            <Text
+              style={[styles.emptySectionText, styles.emptySectionTextPadded]}
+            >
+              You haven't liked anyone yet — head to Match to find a study
+              partner.
             </Text>
           ) : (
             likedProfiles.map((p, idx) => (
@@ -359,18 +402,19 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
               Start matching for your upcoming finals.
             </Text>
           </View>
-          <Ionicons name="arrow-forward" size={18} color={Colors.textOnYellow} />
+          <Ionicons
+            name="arrow-forward"
+            size={18}
+            color={Colors.textOnYellow}
+          />
         </TouchableOpacity>
-
       </ScrollView>
-
     </View>
   );
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-
   root: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -707,5 +751,4 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     letterSpacing: 0.5,
   },
-
 });

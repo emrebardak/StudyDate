@@ -14,8 +14,15 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography } from '../theme';
 import { supabase } from '../lib/supabase';
 import { registrationToProfileUpdate } from '../data/mappers';
+import { toFriendlyErrorMessage } from '../lib/errors';
 
-export default function RegisterFinalScreen({ navigation, route }: { navigation: any; route: any }) {
+export default function RegisterFinalScreen({
+  navigation,
+  route,
+}: {
+  navigation: any;
+  route: any;
+}) {
   const incoming = route?.params?.data ?? {};
   const [focusGoal, setFocusGoal] = useState('');
   const [saving, setSaving] = useState(false);
@@ -46,7 +53,7 @@ export default function RegisterFinalScreen({ navigation, route }: { navigation:
         .update(payload)
         .eq('id', userId);
       if (updateError) {
-        setError(updateError.message);
+        setError(toFriendlyErrorMessage(updateError));
         return;
       }
       navigation.reset({
@@ -54,7 +61,11 @@ export default function RegisterFinalScreen({ navigation, route }: { navigation:
         routes: [{ name: 'MainTabs' }],
       });
     } catch (e: any) {
-      setError(e?.message ?? 'Something went wrong. Please try again.');
+      setError(
+        toFriendlyErrorMessage(e, {
+          fallbackMessage: 'Something went wrong. Please try again.',
+        }),
+      );
     } finally {
       setSaving(false);
     }
@@ -72,7 +83,6 @@ export default function RegisterFinalScreen({ navigation, route }: { navigation:
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-
           {/* Step header */}
           <Text style={styles.stepLabel}>STEP 4 OF 4</Text>
           <View style={styles.progressTrack}>
@@ -108,8 +118,14 @@ export default function RegisterFinalScreen({ navigation, route }: { navigation:
             Upload a professional portrait for your academic card.
           </Text>
           <TouchableOpacity style={styles.uploadBox} activeOpacity={0.8}>
-            <Ionicons name="cloud-upload-outline" size={44} color={Colors.primaryAlt} />
-            <Text style={styles.uploadText}>Drag & drop or click to browse</Text>
+            <Ionicons
+              name="cloud-upload-outline"
+              size={44}
+              color={Colors.primaryAlt}
+            />
+            <Text style={styles.uploadText}>
+              Drag & drop or click to browse
+            </Text>
           </TouchableOpacity>
 
           {/* ── Complete CTA ── */}
@@ -147,7 +163,11 @@ export default function RegisterFinalScreen({ navigation, route }: { navigation:
               <View style={styles.previewInfo}>
                 <Text style={styles.previewName}>{previewName}</Text>
                 <View style={styles.previewDeptRow}>
-                  <Ionicons name="school-outline" size={14} color={Colors.textSecondary} />
+                  <Ionicons
+                    name="school-outline"
+                    size={14}
+                    color={Colors.textSecondary}
+                  />
                   <Text style={styles.previewDept}>{previewDept}</Text>
                 </View>
               </View>
@@ -165,7 +185,6 @@ export default function RegisterFinalScreen({ navigation, route }: { navigation:
           <Text style={styles.previewFooter}>
             This card will represent you in global lobbies and study sessions.
           </Text>
-
         </ScrollView>
       </KeyboardAvoidingView>
     </View>

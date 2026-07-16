@@ -97,3 +97,24 @@ export function registrationToProfileUpdate(
   if (data.focusGoal !== undefined) payload.current_goal_text = data.focusGoal;
   return payload;
 }
+
+/**
+ * Inverse of registrationToProfileUpdate: rebuilds a partial RegistrationData
+ * from a `public.users` row so a user resuming an incomplete registration
+ * (signed up at Step 1, quit before Step 4's UPDATE ever ran) doesn't have to
+ * retype whatever they'd already entered. `email` isn't a registration field
+ * collected via this row — it comes from the auth session instead.
+ */
+export function profileRowToRegistrationData(
+  row: any,
+  email?: string,
+): Partial<RegistrationData> {
+  const data: Partial<RegistrationData> = {};
+  if (email) data.email = email;
+  if (row?.name) data.fullName = row.name;
+  if (row?.university) data.institution = row.university;
+  if (row?.department) data.department = row.department;
+  if (row?.current_tags?.length) data.traits = row.current_tags;
+  if (row?.current_goal_text) data.focusGoal = row.current_goal_text;
+  return data;
+}

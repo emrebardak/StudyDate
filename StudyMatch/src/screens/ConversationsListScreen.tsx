@@ -11,6 +11,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography } from '../theme';
 import { supabase } from '../lib/supabase';
+import { toFriendlyErrorMessage } from '../lib/errors';
 
 interface ConversationRow {
   id: string;
@@ -28,13 +29,23 @@ function LoadingState() {
   );
 }
 
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+function ErrorState({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
   return (
     <View style={styles.stateContainer}>
       <Ionicons name="warning-outline" size={52} color={Colors.textMuted} />
       <Text style={styles.emptyTitle}>Something went wrong</Text>
       <Text style={styles.emptySubtitle}>{message}</Text>
-      <TouchableOpacity style={styles.refreshBtn} onPress={onRetry} activeOpacity={0.8}>
+      <TouchableOpacity
+        style={styles.refreshBtn}
+        onPress={onRetry}
+        activeOpacity={0.8}
+      >
         <Ionicons name="refresh-outline" size={16} color={Colors.primary} />
         <Text style={styles.refreshBtnText}>Retry</Text>
       </TouchableOpacity>
@@ -48,14 +59,21 @@ function EmptyState() {
       <Ionicons name="chatbubbles-outline" size={52} color={Colors.textMuted} />
       <Text style={styles.emptyTitle}>No conversations yet</Text>
       <Text style={styles.emptySubtitle}>
-        Once you match with someone in Discovery, your conversation shows up here.
+        Once you match with someone in Discovery, your conversation shows up
+        here.
       </Text>
     </View>
   );
 }
 
 // ── Conversation Row ─────────────────────────────────────────────────────────────
-function ConversationRowItem({ item, onPress }: { item: ConversationRow; onPress: () => void }) {
+function ConversationRowItem({
+  item,
+  onPress,
+}: {
+  item: ConversationRow;
+  onPress: () => void;
+}) {
   return (
     <TouchableOpacity style={styles.row} activeOpacity={0.8} onPress={onPress}>
       <View style={styles.avatarCircle}>
@@ -65,7 +83,9 @@ function ConversationRowItem({ item, onPress }: { item: ConversationRow; onPress
         <Text style={styles.rowName} numberOfLines={1}>
           {item.partnerName}
         </Text>
-        <Text style={styles.rowStatus}>{item.isActive ? 'Active' : 'Ended'}</Text>
+        <Text style={styles.rowStatus}>
+          {item.isActive ? 'Active' : 'Ended'}
+        </Text>
       </View>
       {item.isActive ? (
         <Ionicons name="lock-closed" size={16} color={Colors.primary} />
@@ -77,7 +97,11 @@ function ConversationRowItem({ item, onPress }: { item: ConversationRow; onPress
 }
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
-export default function ConversationsListScreen({ navigation }: { navigation: any }) {
+export default function ConversationsListScreen({
+  navigation,
+}: {
+  navigation: any;
+}) {
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
   const [myInitial, setMyInitial] = useState('?');
   const [loading, setLoading] = useState(true);
@@ -99,7 +123,11 @@ export default function ConversationsListScreen({ navigation }: { navigation: an
         return;
       }
 
-      const { data: ownRow } = await supabase.from('users').select('name').eq('id', userId).single();
+      const { data: ownRow } = await supabase
+        .from('users')
+        .select('name')
+        .eq('id', userId)
+        .single();
       setMyInitial(ownRow?.name ? ownRow.name[0].toUpperCase() : '?');
 
       const { data: matchRows, error: matchError } = await supabase
@@ -108,7 +136,7 @@ export default function ConversationsListScreen({ navigation }: { navigation: an
         .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
         .order('updated_at', { ascending: false });
       if (matchError) {
-        setError(matchError.message);
+        setError(toFriendlyErrorMessage(matchError));
         return;
       }
 
@@ -117,12 +145,19 @@ export default function ConversationsListScreen({ navigation }: { navigation: an
         return;
       }
 
-      const partnerIds = matchRows.map((m) => (m.user1_id === userId ? m.user2_id : m.user1_id));
-      const { data: partners } = await supabase.from('users').select('id, name').in('id', partnerIds);
-      const nameById = new Map((partners ?? []).map((p) => [p.id, p.name as string]));
+      const partnerIds = matchRows.map(m =>
+        m.user1_id === userId ? m.user2_id : m.user1_id,
+      );
+      const { data: partners } = await supabase
+        .from('users')
+        .select('id, name')
+        .in('id', partnerIds);
+      const nameById = new Map(
+        (partners ?? []).map(p => [p.id, p.name as string]),
+      );
 
       setConversations(
-        matchRows.map((m) => {
+        matchRows.map(m => {
           const partnerId = m.user1_id === userId ? m.user2_id : m.user1_id;
           const name = nameById.get(partnerId) || 'Anonymous Match';
           return {
@@ -134,7 +169,11 @@ export default function ConversationsListScreen({ navigation }: { navigation: an
         }),
       );
     } catch (e: any) {
-      setError(e?.message ?? 'Failed to load conversations.');
+      setError(
+        toFriendlyErrorMessage(e, {
+          fallbackMessage: 'Failed to load conversations.',
+        }),
+      );
     } finally {
       setLoading(false);
     }
@@ -160,16 +199,27 @@ export default function ConversationsListScreen({ navigation }: { navigation: an
       </View>
 
       {loading && <LoadingState />}
-      {!loading && !!error && <ErrorState message={error} onRetry={loadConversations} />}
+      {!loading && !!error && (
+        <ErrorState message={error} onRetry={loadConversations} />
+      )}
       {!loading && !error && conversations.length === 0 && <EmptyState />}
 
       {!loading && !error && conversations.length > 0 && (
-        <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
           <View style={styles.card}>
             {conversations.map((item, idx) => (
               <React.Fragment key={item.id}>
                 {idx > 0 && <View style={styles.divider} />}
-                <ConversationRowItem item={item} onPress={() => navigation.navigate('Chat', { matchId: item.id })} />
+                <ConversationRowItem
+                  item={item}
+                  onPress={() =>
+                    navigation.navigate('Chat', { matchId: item.id })
+                  }
+                />
               </React.Fragment>
             ))}
           </View>

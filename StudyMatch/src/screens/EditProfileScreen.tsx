@@ -14,6 +14,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography } from '../theme';
 import { supabase } from '../lib/supabase';
 import { mapUserFromAPI } from '../data/mappers';
+import { toFriendlyErrorMessage } from '../lib/errors';
 import type { User } from '../types';
 
 // Real users.year is DB-constrained to exactly these four (CHECK constraint) —
@@ -21,7 +22,12 @@ import type { User } from '../types';
 // (which included 'Graduate / Masters' / 'PhD Candidate', neither a valid
 // column value, and used a "Freshman / Year 1" display format that didn't
 // match the stored value at all).
-const ACADEMIC_YEARS: NonNullable<User['year']>[] = ['Freshman', 'Sophomore', 'Junior', 'Senior'];
+const ACADEMIC_YEARS: NonNullable<User['year']>[] = [
+  'Freshman',
+  'Sophomore',
+  'Junior',
+  'Senior',
+];
 
 // Same trait vocabulary as RegisterTraitsScreen (Step 3 of signup) — both
 // screens write into the same free-text `current_tags` column, so using two
@@ -99,7 +105,8 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
   const [photoUrl, setPhotoUrl] = useState<string | undefined>(undefined);
   const [university, setUniversity] = useState('');
   const [department, setDepartment] = useState('');
-  const [academicYear, setAcademicYear] = useState<NonNullable<User['year']>>('Freshman');
+  const [academicYear, setAcademicYear] =
+    useState<NonNullable<User['year']>>('Freshman');
   const [bio, setBio] = useState('');
   const [selectedTraits, setSelectedTraits] = useState<string[]>([]);
   const [customTrait, setCustomTrait] = useState('');
@@ -127,18 +134,26 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
         .eq('id', userId)
         .single();
       if (error) {
-        setLoadError(error.message);
+        setLoadError(toFriendlyErrorMessage(error));
         return;
       }
       const user = mapUserFromAPI(row);
       setPhotoUrl(user.photoUrl);
       setUniversity(user.university);
       setDepartment(user.department);
-      setAcademicYear((ACADEMIC_YEARS as string[]).includes(user.year) ? user.year : 'Freshman');
+      setAcademicYear(
+        (ACADEMIC_YEARS as string[]).includes(user.year)
+          ? user.year
+          : 'Freshman',
+      );
       setBio(user.bio ?? '');
       setSelectedTraits(user.currentTags ?? []);
     } catch (e: any) {
-      setLoadError(e?.message ?? 'Failed to load profile.');
+      setLoadError(
+        toFriendlyErrorMessage(e, {
+          fallbackMessage: 'Failed to load profile.',
+        }),
+      );
     } finally {
       setLoading(false);
     }
@@ -149,15 +164,15 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
   }, [loadProfile]);
 
   function toggleTrait(key: string) {
-    setSelectedTraits((prev) =>
-      prev.includes(key) ? prev.filter((t) => t !== key) : [...prev, key],
+    setSelectedTraits(prev =>
+      prev.includes(key) ? prev.filter(t => t !== key) : [...prev, key],
     );
   }
 
   function addCustomTrait() {
     const trait = customTrait.trim();
     if (!trait) return;
-    setSelectedTraits((prev) => (prev.includes(trait) ? prev : [...prev, trait]));
+    setSelectedTraits(prev => (prev.includes(trait) ? prev : [...prev, trait]));
     setCustomTrait('');
   }
 
@@ -182,12 +197,16 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
         })
         .eq('id', userId);
       if (error) {
-        setSaveError(error.message);
+        setSaveError(toFriendlyErrorMessage(error));
         return;
       }
       navigation?.goBack?.();
     } catch (e: any) {
-      setSaveError(e?.message ?? 'Failed to save. Please try again.');
+      setSaveError(
+        toFriendlyErrorMessage(e, {
+          fallbackMessage: 'Failed to save. Please try again.',
+        }),
+      );
     } finally {
       setSaving(false);
     }
@@ -210,7 +229,11 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
           <Ionicons name="warning-outline" size={52} color={Colors.textMuted} />
           <Text style={styles.emptyTitle}>Something went wrong</Text>
           <Text style={styles.emptySubtitle}>{loadError}</Text>
-          <TouchableOpacity style={styles.refreshBtn} onPress={loadProfile} activeOpacity={0.8}>
+          <TouchableOpacity
+            style={styles.refreshBtn}
+            onPress={loadProfile}
+            activeOpacity={0.8}
+          >
             <Ionicons name="refresh-outline" size={16} color={Colors.primary} />
             <Text style={styles.refreshBtnText}>Retry</Text>
           </TouchableOpacity>
@@ -245,9 +268,7 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
         </TouchableOpacity>
       </View>
 
-      {!!saveError && (
-        <Text style={styles.saveErrorText}>{saveError}</Text>
-      )}
+      {!!saveError && <Text style={styles.saveErrorText}>{saveError}</Text>}
 
       <ScrollView
         style={styles.scroll}
@@ -258,7 +279,11 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
         <SectionHeader title="Visual Presence" />
 
         <View style={styles.visualRow}>
-          <TouchableOpacity style={styles.avatarWrap} activeOpacity={0.85} onPress={photoComingSoon}>
+          <TouchableOpacity
+            style={styles.avatarWrap}
+            activeOpacity={0.85}
+            onPress={photoComingSoon}
+          >
             {photoUrl ? (
               <Image source={{ uri: photoUrl }} style={styles.avatar} />
             ) : (
@@ -267,15 +292,19 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
               </View>
             )}
             <View style={styles.avatarOverlay}>
-              <Ionicons name="camera-outline" size={28} color={Colors.primary} />
+              <Ionicons
+                name="camera-outline"
+                size={28}
+                color={Colors.primary}
+              />
               <Text style={styles.avatarOverlayText}>Change</Text>
             </View>
           </TouchableOpacity>
 
           <View style={styles.gallerySection}>
             <Text style={styles.galleryHint}>
-              Add photos of your typical study environment or past projects to give
-              matches a better sense of your style.
+              Add photos of your typical study environment or past projects to
+              give matches a better sense of your style.
             </Text>
             <ScrollView
               horizontal
@@ -283,7 +312,11 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
               contentContainerStyle={styles.galleryRow}
             >
               {Array.from({ length: gallerySlots }).map((_, i) => (
-                <TouchableOpacity key={i} style={styles.gallerySlot} onPress={photoComingSoon}>
+                <TouchableOpacity
+                  key={i}
+                  style={styles.gallerySlot}
+                  onPress={photoComingSoon}
+                >
                   <Ionicons name="add" size={24} color={Colors.textSecondary} />
                 </TouchableOpacity>
               ))}
@@ -311,7 +344,7 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
             <Text style={styles.inputLabel}>Academic Year</Text>
             <TouchableOpacity
               style={styles.inputRow}
-              onPress={() => setYearPickerOpen((v) => !v)}
+              onPress={() => setYearPickerOpen(v => !v)}
             >
               <Ionicons
                 name="school-outline"
@@ -328,7 +361,7 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
             </TouchableOpacity>
             {yearPickerOpen && (
               <View style={styles.yearList}>
-                {ACADEMIC_YEARS.map((year) => (
+                {ACADEMIC_YEARS.map(year => (
                   <TouchableOpacity
                     key={year}
                     style={styles.yearItem}
@@ -365,12 +398,12 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
 
         <View style={styles.traitsCard}>
           <Text style={styles.traitsHint}>
-            Select tags that best describe how you operate intellectually. This helps
-            the matching algorithm find compatible partners.
+            Select tags that best describe how you operate intellectually. This
+            helps the matching algorithm find compatible partners.
           </Text>
 
           <View style={styles.traitsGrid}>
-            {STUDY_TRAITS.map((trait) => {
+            {STUDY_TRAITS.map(trait => {
               const active = selectedTraits.includes(trait.key);
               return (
                 <TouchableOpacity
@@ -384,7 +417,10 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
                     color={active ? Colors.primary : Colors.textSecondary}
                   />
                   <Text
-                    style={[styles.traitLabel, active && styles.traitLabelActive]}
+                    style={[
+                      styles.traitLabel,
+                      active && styles.traitLabelActive,
+                    ]}
                   >
                     {trait.key.toUpperCase()}
                   </Text>
@@ -393,14 +429,18 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
             })}
 
             {selectedTraits
-              .filter((t) => !STUDY_TRAITS.some((st) => st.key === t))
-              .map((custom) => (
+              .filter(t => !STUDY_TRAITS.some(st => st.key === t))
+              .map(custom => (
                 <TouchableOpacity
                   key={custom}
                   style={[styles.traitChip, styles.traitChipActive]}
                   onPress={() => toggleTrait(custom)}
                 >
-                  <Ionicons name="pricetag-outline" size={16} color={Colors.primary} />
+                  <Ionicons
+                    name="pricetag-outline"
+                    size={16}
+                    color={Colors.primary}
+                  />
                   <Text style={[styles.traitLabel, styles.traitLabelActive]}>
                     {custom.toUpperCase()}
                   </Text>
@@ -408,7 +448,10 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
               ))}
 
             <View style={styles.customTraitRow}>
-              <TouchableOpacity onPress={addCustomTrait} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <TouchableOpacity
+                onPress={addCustomTrait}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
                 <Ionicons name="add" size={16} color={Colors.textSecondary} />
               </TouchableOpacity>
               <TextInput

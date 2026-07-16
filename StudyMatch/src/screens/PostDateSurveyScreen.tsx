@@ -10,6 +10,7 @@ import {
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography } from '../theme';
 import { supabase } from '../lib/supabase';
+import { toFriendlyErrorMessage } from '../lib/errors';
 
 // Q2 options — captured but not scored (PRD §7 only lists point values for the
 // meeting-outcome question). Q3 badges — the 4 fixed PRD §7 badge names, plus a
@@ -40,45 +41,71 @@ function Chip({
       onPress={onPress}
     >
       {!!icon && (
-        <Ionicons name={icon as any} size={16} color={active ? Colors.primary : Colors.textSecondary} />
+        <Ionicons
+          name={icon as any}
+          size={16}
+          color={active ? Colors.primary : Colors.textSecondary}
+        />
       )}
-      <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>{label}</Text>
+      <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>
+        {label}
+      </Text>
     </TouchableOpacity>
   );
 }
 
-export default function PostDateSurveyScreen({ navigation, route }: { navigation: any; route: any }) {
+export default function PostDateSurveyScreen({
+  navigation,
+  route,
+}: {
+  navigation: any;
+  route: any;
+}) {
   const studyDateId: string | undefined = route?.params?.studyDateId;
-  const partnerName: string = route?.params?.partnerName || 'your study partner';
+  const partnerName: string =
+    route?.params?.partnerName || 'your study partner';
 
   const [met, setMet] = useState<boolean | null>(null);
-  const [environment, setEnvironment] = useState<(typeof ENVIRONMENTS)[number] | null>(null);
+  const [environment, setEnvironment] = useState<
+    (typeof ENVIRONMENTS)[number] | null
+  >(null);
   const [badge, setBadge] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  async function submit(metAnswer: boolean, environmentAnswer: string | null, badgeAnswer: string | null) {
+  async function submit(
+    metAnswer: boolean,
+    environmentAnswer: string | null,
+    badgeAnswer: string | null,
+  ) {
     if (!studyDateId || saving) return;
     setSaving(true);
     setError('');
     try {
-      const { error: rpcError } = await supabase.rpc('submit_post_date_survey', {
-        p_study_date_id: studyDateId,
-        p_met: metAnswer,
-        p_environment: environmentAnswer,
-        p_badge: badgeAnswer,
-      });
+      const { error: rpcError } = await supabase.rpc(
+        'submit_post_date_survey',
+        {
+          p_study_date_id: studyDateId,
+          p_met: metAnswer,
+          p_environment: environmentAnswer,
+          p_badge: badgeAnswer,
+        },
+      );
       if (rpcError) {
         setError(
-          rpcError.code === '23505'
-            ? 'You already rated this study date.'
-            : rpcError.message,
+          toFriendlyErrorMessage(rpcError, {
+            duplicateMessage: 'You already rated this study date.',
+          }),
         );
         return;
       }
       navigation?.goBack?.();
     } catch (e: any) {
-      setError(e?.message ?? 'Failed to submit. Please try again.');
+      setError(
+        toFriendlyErrorMessage(e, {
+          fallbackMessage: 'Failed to submit. Please try again.',
+        }),
+      );
     } finally {
       setSaving(false);
     }
@@ -108,11 +135,15 @@ export default function PostDateSurveyScreen({ navigation, route }: { navigation
         <View style={styles.headerSide} />
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
         <Text style={styles.heroTitle}>How did it go?</Text>
         <Text style={styles.heroDesc}>
-          Rate your study date with {partnerName}. This stays private and only affects
-          their trust score and badges.
+          Rate your study date with {partnerName}. This stays private and only
+          affects their trust score and badges.
         </Text>
 
         <Text style={styles.questionLabel}>DID YOU MEET UP?</Text>
@@ -123,8 +154,16 @@ export default function PostDateSurveyScreen({ navigation, route }: { navigation
             onPress={() => handleMetAnswer(true)}
             disabled={saving}
           >
-            <Ionicons name="checkmark-circle-outline" size={20} color={met === true ? Colors.textOnYellow : Colors.textPrimary} />
-            <Text style={[styles.yesNoText, met === true && styles.yesNoTextActive]}>Yes</Text>
+            <Ionicons
+              name="checkmark-circle-outline"
+              size={20}
+              color={met === true ? Colors.textOnYellow : Colors.textPrimary}
+            />
+            <Text
+              style={[styles.yesNoText, met === true && styles.yesNoTextActive]}
+            >
+              Yes
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.yesNoBtn, met === false && styles.yesNoBtnActive]}
@@ -132,29 +171,49 @@ export default function PostDateSurveyScreen({ navigation, route }: { navigation
             onPress={() => handleMetAnswer(false)}
             disabled={saving}
           >
-            <Ionicons name="close-circle-outline" size={20} color={met === false ? Colors.textOnYellow : Colors.textPrimary} />
-            <Text style={[styles.yesNoText, met === false && styles.yesNoTextActive]}>No</Text>
+            <Ionicons
+              name="close-circle-outline"
+              size={20}
+              color={met === false ? Colors.textOnYellow : Colors.textPrimary}
+            />
+            <Text
+              style={[
+                styles.yesNoText,
+                met === false && styles.yesNoTextActive,
+              ]}
+            >
+              No
+            </Text>
           </TouchableOpacity>
         </View>
 
         {met === true && (
           <>
-            <Text style={styles.questionLabel}>WAS THE ENVIRONMENT PRODUCTIVE?</Text>
+            <Text style={styles.questionLabel}>
+              WAS THE ENVIRONMENT PRODUCTIVE?
+            </Text>
             <View style={styles.chipGrid}>
-              {ENVIRONMENTS.map((e) => (
-                <Chip key={e} label={e} active={environment === e} onPress={() => setEnvironment(e)} />
+              {ENVIRONMENTS.map(e => (
+                <Chip
+                  key={e}
+                  label={e}
+                  active={environment === e}
+                  onPress={() => setEnvironment(e)}
+                />
               ))}
             </View>
 
             <Text style={styles.questionLabel}>AWARD A BADGE (OPTIONAL)</Text>
             <View style={styles.chipGrid}>
-              {BADGES.map((b) => (
+              {BADGES.map(b => (
                 <Chip
                   key={b.key}
                   label={b.key}
                   icon={b.icon}
                   active={badge === b.key}
-                  onPress={() => setBadge((prev) => (prev === b.key ? null : b.key))}
+                  onPress={() =>
+                    setBadge(prev => (prev === b.key ? null : b.key))
+                  }
                 />
               ))}
             </View>

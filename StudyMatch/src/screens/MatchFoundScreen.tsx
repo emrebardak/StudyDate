@@ -11,15 +11,15 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { supabase } from '../lib/supabase';
 
 // ── Colors ────────────────────────────────────────────────────────────────────
-const BG           = '#000814'; // Ink Black
-const SURFACE      = '#001d3d'; // Prussian Blue
+const BG = '#000814'; // Ink Black
+const SURFACE = '#001d3d'; // Prussian Blue
 const SURFACE_HIGH = '#003566'; // Regal Navy
-const SURFACE_MID  = '#00214a';
-const PRIMARY      = '#ffc300'; // School Bus Yellow
-const TEXT         = '#FFFFFF';
-const TEXT_MUTED   = '#8899AA';
-const TEXT_DIM     = '#4A6080';
-const ON_PRIMARY   = '#000814';
+const SURFACE_MID = '#00214a';
+const PRIMARY = '#ffc300'; // School Bus Yellow
+const TEXT = '#FFFFFF';
+const TEXT_MUTED = '#8899AA';
+const TEXT_DIM = '#4A6080';
+const ON_PRIMARY = '#000814';
 
 interface Props {
   navigation: any;
@@ -27,13 +27,15 @@ interface Props {
 
 export default function MatchFoundScreen({ navigation }: Props) {
   const [partnerName, setPartnerName] = useState('');
+  const [activeMatchId, setActiveMatchId] = useState<string | null>(null);
 
   // Names aren't part of the photo-blur progressive disclosure (only photos stay
   // hidden until mutual reveal) — users_select_matched RLS already lets a matched
   // participant read their partner's row. This screen has no matchId route param,
   // so it resolves the partner the same way DashboardScreen's upcoming-session card
   // does: via the current user's own active_match_id (the Lock System guarantees
-  // there's at most one).
+  // there's at most one). Also kept in state so "Start Chat" can navigate to the
+  // real match instead of the placeholder id it used to pass.
   useEffect(() => {
     let cancelled = false;
     async function loadPartnerName() {
@@ -48,6 +50,9 @@ export default function MatchFoundScreen({ navigation }: Props) {
         .single();
       const activeMatchId = ownRow?.active_match_id;
       if (!activeMatchId) return;
+      if (!cancelled) {
+        setActiveMatchId(activeMatchId);
+      }
 
       const { data: matchRow } = await supabase
         .from('matches')
@@ -55,7 +60,8 @@ export default function MatchFoundScreen({ navigation }: Props) {
         .eq('id', activeMatchId)
         .single();
       if (!matchRow) return;
-      const partnerId = matchRow.user1_id === userId ? matchRow.user2_id : matchRow.user1_id;
+      const partnerId =
+        matchRow.user1_id === userId ? matchRow.user2_id : matchRow.user1_id;
 
       const { data: partnerRow } = await supabase
         .from('users')
@@ -78,7 +84,6 @@ export default function MatchFoundScreen({ navigation }: Props) {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-
         {/* ── Medal icon ───────────────────────────────────────────────────── */}
         <View style={styles.medalContainer}>
           <Ionicons name="medal" size={48} color={PRIMARY} />
@@ -113,7 +118,9 @@ export default function MatchFoundScreen({ navigation }: Props) {
         {/* ── Description ─────────────────────────────────────────────────── */}
         <Text style={styles.description}>
           {'You and '}
-          <Text style={styles.partnerName}>{partnerName || 'your study partner'}</Text>
+          <Text style={styles.partnerName}>
+            {partnerName || 'your study partner'}
+          </Text>
           {' are ready to master '}
           <Text style={styles.subjectName}>Advanced Quantum Mechanics</Text>
           {' together.'}
@@ -124,10 +131,13 @@ export default function MatchFoundScreen({ navigation }: Props) {
         {/* ── Start Chat button ───────────────────────────────────────────── */}
         <TouchableOpacity
           style={styles.startChatBtn}
-          onPress={() => navigation.navigate('Chat', { matchId: 'new' })}
+          onPress={() => {
+            if (!activeMatchId) return;
+            navigation.navigate('Chat', { matchId: activeMatchId });
+          }}
           activeOpacity={0.85}
         >
-          <Text style={styles.startChatText}>Start Chat  ▷</Text>
+          <Text style={styles.startChatText}>Start Chat ▷</Text>
         </TouchableOpacity>
 
         {/* ── Keep Swiping button ─────────────────────────────────────────── */}
@@ -138,7 +148,6 @@ export default function MatchFoundScreen({ navigation }: Props) {
         >
           <Text style={styles.keepSwipingText}>Keep Swiping</Text>
         </TouchableOpacity>
-
       </ScrollView>
     </SafeAreaView>
   );

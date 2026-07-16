@@ -581,3 +581,134 @@ Reported gap, confirmed by reading the trigger definition before any fix: `enfor
 
 ### Next steps (suggested)
 - Same as Session 15/16 — nothing new opened by this session.
+
+---
+
+## Session 18 — The −10 last-minute-cancellation trust tier
+
+### What was done
+Asked, before writing any code, to propose design options rather than pick one unilaterally: PRD §7 lists 3 trust-score tiers but Session 14 only implemented 2 (+2/−25), since the post-date survey's binary "did it happen?" question has no attribution for *who* cancelled or *when*. Presented 3 concrete options — (1) a dedicated `cancel_study_date()` RPC mirroring the survey system's architecture, (2) a trigger-driven direct `UPDATE` mirroring the Lock System's architecture, (3) extending the existing survey with a peer-reported "no-show vs. cancelled-in-advance" sub-answer (lowest cost, but no objective timestamp rule — flagged as not really meeting the "hard rule, not a vibe" bar). **Option 1 was chosen.**
+
+**`last_minute_cancellation.sql` (Migration 18)**:
+- Two new `study_dates` columns: `cancelled_by`, `cancelled_at`.
+- **`cancel_study_date(study_date_id)`** RPC (`SECURITY DEFINER`) — no `cancelled_by` parameter at all; always `auth.uid()`. Rejects a non-participant, an already-terminal date, or a date already past (that's the survey's job). Applies −10 to the **caller** only if `scheduled_time - NOW() < INTERVAL '2 hours'` (named constant) and the match is still `'active'` (a match already ended via `handleEndMatch`/the timeout cron shouldn't also incur a redundant cancellation penalty for a now-moot leftover proposal). Race-safety: the terminal-status check is re-verified in the `UPDATE`'s own `WHERE` clause (not just the earlier `SELECT`), with a `ROW_COUNT` check after — closes a double-cancel race without needing an advisory lock, since (unlike the mutual-match-formation race) this is a single-row, not a two-row, race.
+- **New guard trigger** `protect_study_date_cancellation()` — `BEFORE UPDATE ON study_dates`, deliberately `SECURITY INVOKER` (the Session 6 lesson applied again: a `DEFINER` guard would read `current_user` as the function owner even for a plain client PATCH, making the check a no-op). Blocks any direct client write to `status='cancelled'`, `cancelled_by`, or `cancelled_at` — without it, `study_dates_update_participant` RLS (Migration 6) already permits a participant to `UPDATE` any column, including forging `cancelled_by` to blame the other participant.
+- **Companion fix to `submit_post_date_survey`**: now rejects an already-`'cancelled'` study date. Without this, someone could cancel within the window (−10) and then also get surveyed `met=false` by the other side for an additional −25 on the same date — a real double-penalty vector that only became reachable once a cancellation concept existed at all (the original function only ever checked `scheduled_time`, never `status`).
+
+**Explicitly not built this session**: any frontend UI. Neither `StudyDatePlannerScreen.tsx` nor `ChatScreen.tsx` currently renders a list of upcoming study dates with any per-date action — a "Cancel" button needs that surface built from scratch. The task as given scoped the deliverable to "a new migration," verified at the SQL/REST level, not on-device; flagging this rather than silently expanding scope to build new UI unasked, or silently skipping the frontend-wiring habit without saying so.
+
+#### Verified
+- **SQL-level** (9 assertions): a near-term cancel (1h away) correctly applies exactly −10 to the caller only (partner unaffected); a far-term cancel (5h away) correctly applies **no** penalty; re-cancelling is rejected (`ST008`); cancelling an already-past date is rejected (`ST009`, directs to the survey instead); a bystander is rejected (`ST007`); **both** direct-tampering vectors are blocked by the guard trigger — a plain `status='cancelled'` write, and forging `cancelled_by` to the other participant — both `ST010`; surveying the now-cancelled date is rejected (`ST011`, the companion fix).
+- **REST-level**, real `@supabase/supabase-js` script (`cancel_study_date_test.mjs`): mutual-swipe match, real near-term study date, direct client `PATCH status=cancelled` rejected before ever reaching the RPC, real `cancel_study_date` RPC call → 100→90 on the caller only, re-cancel rejected, survey-on-cancelled rejected, and — critically — the score is still exactly 90 after the rejected survey attempt (no silent double-apply).
+- `npx supabase db reset` — all 18 migrations replay clean.
+- `npx tsc --noEmit` — **0 errors** (backend-only change).
+- Docker Desktop went down mid-session (unrelated to this work) and had to be restarted before verification could run — noted here only because it explains the pause, not because it affected the result once back up.
+
+### Next steps (suggested)
+- [ ] Frontend UI for cancelling a study date — no entry point exists anywhere yet (see "Explicitly not built" above)
+- [ ] Everything else — same as Session 15/16/17, unchanged.
+
+---
+
+## Session 19 — Frontend: stop leaking raw Postgres errors to users (security-review follow-up)
+
+### What was done
+
+A security review flagged that most screens display raw Supabase/PostgREST error strings directly to users via `setError(error.message)` — a mild information-disclosure/UX issue (literal Postgres constraint names, internal error text on-screen). Only `PostDateSurveyScreen.tsx` bothered mapping a specific error code (`23505`) to a friendly message; everywhere else was raw.
+
+**Scope check before coding**: the review named 6 files (`DashboardScreen.tsx`, `DiscoveryScreen.tsx`, `ChatScreen.tsx`, `EditProfileScreen.tsx`, `RegisterFinalScreen.tsx`, `StudyDatePlannerScreen.tsx`). A quick grep turned up the identical pattern in two more it hadn't listed — `MyProfileScreen.tsx` and `ConversationsListScreen.tsx`. Asked before assuming scope; user said include both.
+
+#### New file: `src/lib/errors.ts`
+`toFriendlyErrorMessage(error, options)` — the one sanctioned mapping point from a Supabase/PostgREST error (or any thrown error) to display text:
+- `23505` (unique_violation) → `options.duplicateMessage` if the caller supplied one (context-specific — "already rated this study date" and "already sent this request" aren't the same message), else a generic default.
+- `42501` (RLS denial) → "You don't have permission to do that."
+- No `.code` and the error is a `TypeError` (the shape of a dead-connection fetch failure) → "Check your connection and try again."
+- Everything else → `options.fallbackMessage` if supplied, else a generic "Something went wrong. Please try again."
+- Always `console.warn`s the real `error.message` first, so the actual error stays visible in Metro/dev tooling — matching the pattern `DiscoveryScreen.tsx`'s `recordSwipe()` already used for its own non-blocking failures (Session 12).
+
+#### Applied at every `setError`/`setLoadError`/`setSaveError` call site across 9 files
+The 6 originally named files, the 2 added after the scope check, plus **`PostDateSurveyScreen.tsx`** itself — its 23505 branch was already correct, but its `else` branch still fell through to raw `rpcError.message`, and its catch block had the same `e?.message ?? 'fallback'` leak as everywhere else (only the fallback half of that ternary was ever safe). Folded into the same pass since it's the identical bug class, not a new one. Its existing "You already rated this study date." wording was preserved via `duplicateMessage`.
+
+No RPC, RLS, or backend files touched — this is purely a display-text change. `console.warn(error.message)` still fires everywhere a friendly message is now shown, so nothing was lost for debugging, only removed from the user-facing surface.
+
+#### Verified
+- `npx tsc --noEmit` — **0 errors** across all 10 changed files (9 screens + the new helper).
+- **Not verified on-device this session** — no emulator/device access available, same limitation as Session 12. The manual pass this still needs: trigger a real error in 2-3 of the affected screens (e.g. sign out mid-session and retry an action, or force a duplicate submission) and confirm the displayed text is the friendly mapped string while the real error still lands in the Metro console via `console.warn`.
+
+#### Docs
+- `docs/frontend-dev.md`'s "Loading & Error States" section — no formal checklist exists in this file (checked before assuming one did), so added a paragraph there documenting `toFriendlyErrorMessage` as the required call at every `setError`-adjacent site, since that's the closest existing structure to "check off."
+
+### Next steps (suggested)
+- [ ] On-device verification pass for this session's error-message changes (see Verified above)
+- [ ] Frontend UI for cancelling a study date (Session 18, still open)
+- [ ] Everything else — same as Session 15/16/17, unchanged.
+
+---
+
+## Session 20 — Named constants for trust-score point values/thresholds (coding-standards follow-up)
+
+### What was done
+A `coding-standards` review found the trust-score code didn't follow `docs/backend-dev.md`'s own stated intent ("use named constants for point values and thresholds so a future PRD change is a one-line edit, not a grep-and-replace"): the `+2`/`-25` delta in `submit_post_date_survey()`, the `-10` in `cancel_study_date()`, and the `60` shadowban threshold in `discoverable_users` were all bare literals.
+
+**`trust_score_named_constants.sql` (Migration 19)** — `CREATE OR REPLACE` on all three:
+- `submit_post_date_survey()`: `DECLARE` block gains `c_survey_met_delta CONSTANT INTEGER := 2` and `c_survey_no_show_delta CONSTANT INTEGER := -25`; the `CASE` now references them instead of bare literals.
+- `cancel_study_date()`: `DECLARE` block gains `c_last_minute_cancel_delta CONSTANT INTEGER := -10`.
+- `discoverable_users`: views have no `DECLARE` block — no PL/pgSQL constant is possible. Rather than inventing a lookup table for one threshold (over-engineering CLAUDE.md explicitly warns against), named it via a same-file SQL comment directly above `WHERE trust_score >= 60`, citing the value and PRD §8.
+- **Flagged accepted limitation** (in the migration header, same as every other deliberate deviation this project has documented): PL/pgSQL constants are function-local — no shared/importable constant across function bodies without a lookup table. Not actually a problem here (no single point value is used by both functions), but it does mean any future edit to either function will re-paste its already-declared constants verbatim into that migration's text, since `CREATE OR REPLACE FUNCTION` requires restating the entire body — exactly what already happened once when Migration 18 re-pasted Migration 14's literal `2`/`-25` to add the cancellation-status check.
+- Checked for other unnamed trust-score-adjacent literals before calling this done (`grep trust_score` across all migrations): `users.trust_score INTEGER DEFAULT 100` is a column default, not a function/view-scoped value — Postgres has no named-constant mechanism for column defaults, and a single unchanging startup value isn't worth building one for. The `GREATEST(..., 0)` floor is a structural invariant (trust scores never go negative by design), not a tunable PRD point value. Both deliberately left as-is, with this reasoning, rather than silently building something for them or silently skipping the check.
+
+#### Verified
+- Re-ran two existing REST scripts **unmodified** (`phase5_survey_test.mjs`, `cancel_study_date_test.mjs`) — identical results to their original runs: `+2`, `-25`, `-10` all land exactly as before.
+- New SQL check for the `60` threshold specifically (neither existing script touches Discovery): `trust_score=59` correctly excluded from `discoverable_users` (0 rows), `trust_score=60` correctly included (1 row) — the boundary is unchanged.
+- `npx supabase db reset` — all 19 migrations replay clean.
+- `npx tsc --noEmit` — **0 errors** (no frontend files touched).
+
+### Next steps (suggested)
+- Same as Session 18/19 — nothing new opened by this session.
+
+---
+
+## Session 21 — Fix unreachable MatchFoundScreen (register route + real Chat matchId)
+
+### What was done
+`MatchFoundScreen.tsx` was fully built and already showed the real matched partner's name (Session 12), but was unreachable: it had a `RootStackParamList['MatchFound']` type entry but no corresponding `Stack.Screen` in `AppNavigator.tsx`, and its "Start Chat" button navigated with a hardcoded `matchId: 'new'` placeholder instead of a real id.
+
+**Frontend-only fix, two files:**
+- `AppNavigator.tsx` — imported `MatchFoundScreen` and registered it as a plain `Stack.Screen` (`name="MatchFound"`), alongside `StudentProfile` rather than as a `transparentModal` like `StudyDatePlanner`/`PostDateSurvey` — its own styling gives it a solid full-screen `SafeAreaView` background, the opposite of what a transparent-overlay presentation is for.
+- `MatchFoundScreen.tsx` — the effect that already resolved the partner's name via the current user's `active_match_id` (Lock System guarantees at most one) now also stores that id in a new `activeMatchId` state. "Start Chat" passes it to `navigation.navigate('Chat', { matchId: activeMatchId })` instead of the `'new'` placeholder, and no-ops if it hasn't resolved yet rather than navigating with a bad id.
+
+Left untouched per the task's explicit scope: the mock "98% synergy" score, the hardcoded subject name, and this screen's local color constants instead of `src/theme` — all separately-tracked, pre-existing gaps.
+
+#### Verified
+- `grep -rn "MatchFound" StudyMatch/src` — only the type declaration (`types/index.ts`), the new registration, and the component's own definition reference it; no other screen was already calling `navigation.navigate('MatchFound', ...)` with an expectation this fix could break.
+- `npx tsc --noEmit` — **0 errors**.
+- **Not verified on-device** — no emulator/device access this session (same standing limitation as Sessions 12/19). Still needs a real walk-through: reach `MatchFound` from an actual mutual match, confirm the partner name renders, and confirm "Start Chat" lands on the real conversation in `ChatScreen` rather than a broken/blank one.
+
+### Next steps (suggested)
+- On-device verification pass for this fix (see Verified above)
+- The known, deliberately-untouched gaps on this screen (mock synergy score/subject, local color constants) remain open if ever prioritized
+- Same backend items as Session 18/19/20 — unchanged
+
+---
+
+## Session 22 — Fix the incomplete-registration gap (open since Session 9)
+
+### What was done
+Session 9 flagged, but didn't fix: a user who signs up (Step 1) and quits before Steps 2-4 has a blank `public.users` row (`name`/`university`/`department`/`current_goal_text` all `NULL`), since only Step 4's "Complete Archive" ever writes to that row. `AppNavigator.tsx`'s session-resolution effect only checked *whether* a session existed, not whether registration had actually finished — so that user could sign back in later and land straight in `MainTabs` with a permanently-blank profile, no path back to finish onboarding.
+
+**Frontend-only fix, two files:**
+- `AppNavigator.tsx` — after confirming a session exists, now also fetches `select('name, university, department, current_tags, current_goal_text')` from the user's own `public.users` row (`users_select_own` RLS already permits this — no backend change). A falsy `name` (Step 2's first-collected field) is treated as "registration never finished," routing to `RegisterProfile` instead of `MainTabs`. A fetch error fails open to `MainTabs` — a transient network hiccup shouldn't lock out an already-registered user, matching the prior behavior when this check didn't exist at all.
+- `src/data/mappers.ts` — added `profileRowToRegistrationData(row, email?)`, the inverse of the existing `registrationToProfileUpdate`, so whatever the row already has gets passed forward as `route.params.data` (same shape `RegisterProfileScreen` already reads via the normal flow) instead of making a resuming user retype fields they'd already entered. `email` comes from the auth session, not the row (registration collects it at Step 1, before any `public.users` write).
+- `RegisterProfileScreen`'s `Stack.Screen` gained an `initialParams={{ data: pendingProfileData ?? {} }}` — `initialRouteName` alone can't carry params, so this is the mechanism that actually delivers the resumed data when `RegisterProfile` is the resolved initial route.
+
+**Known limitation, not a regression**: since only Step 4 persists anything, `pendingProfileData` will almost always be empty in practice today (a user who quit before Step 4 has nothing in the row to resume from, even if they'd typed plenty into Steps 2-3's in-memory nav params). The mapper is still correct groundwork — it reflects DB truth and will start actually pre-filling data the moment any earlier step ever gains incremental persistence, without needing to revisit this fix.
+
+#### Verified
+- `npx tsc --noEmit` — **0 errors**.
+- **REST-level script** (throwaway, run from `StudyMatch/` for `node_modules` resolution, deleted after use — matching this project's established scripted-verification pattern): (1) signed up a fresh `.edu` account, stopped before any Step 2-4 write, signed out, signed back in, fetched the same columns `AppNavigator.tsx` now queries — `row.name` was `null`, confirming the `!row?.name` gate would route to `RegisterProfile`. (2) signed up a second account, applied the exact Step 4 `UPDATE` payload shape (`registrationToProfileUpdate`'s fields), signed out, signed back in — `row.name` was `"Jane Scholar"` (truthy), confirming the happy path still resolves to `MainTabs`, no regression. Both synthetic test accounts deleted from `auth.users` afterward; confirmed via a follow-up `count(*)` query returning `0`.
+- **Not verified on a running React Native app** — no emulator/device access this session (same standing limitation as prior sessions). The REST-level script proves the query and gating logic behave as `AppNavigator.tsx` assumes, but the actual navigation transition hasn't been watched happen on-device.
+
+### Next steps (suggested)
+- On-device verification pass for this fix
+- If registration is ever changed to persist incrementally (writing at Step 2/3 instead of only Step 4), `profileRowToRegistrationData` will start actually mattering for prefill — worth revisiting `RegisterProfileScreen`/`RegisterTraitsScreen`'s own `useState` initializers then, since they currently ignore `route.params.data` entirely except when spreading it forward
+- Same backend items as Session 18/19/20/21 — unchanged
