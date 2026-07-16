@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography, Shadow } from '../theme';
 import { supabase } from '../lib/supabase';
@@ -38,7 +39,9 @@ function MessageBubble({
   const isMe = message.senderId === currentUserId;
   return (
     <View style={[styles.bubbleRow, isMe && styles.bubbleRowMe]}>
-      <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleOther]}>
+      <View
+        style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleOther]}
+      >
         <Text style={styles.bubbleText}>{message.content}</Text>
         <View style={[styles.bubbleMeta, isMe && styles.bubbleMetaMe]}>
           <Text style={styles.bubbleTime}>{formatTime(message.createdAt)}</Text>
@@ -65,8 +68,8 @@ function RevealCard() {
       </View>
       <Text style={styles.revealTitle}>Ready to Reveal?</Text>
       <Text style={styles.revealDesc}>
-        Both of you must agree to reveal your identities. Once confirmed,
-        your profiles will be unlocked.
+        Both of you must agree to reveal your identities. Once confirmed, your
+        profiles will be unlocked.
       </Text>
       <View style={styles.revealButtons}>
         <TouchableOpacity style={styles.btnReveal}>
@@ -76,6 +79,25 @@ function RevealCard() {
           <Text style={styles.btnNotYetText}>Not Yet</Text>
         </TouchableOpacity>
       </View>
+    </View>
+  );
+}
+
+// ── Post-Date Survey Banner (Phase 5) ───────────────────────────────────────────
+function SurveyBanner({ onRate }: { onRate: () => void }) {
+  return (
+    <View style={styles.revealCard}>
+      <View style={styles.revealIconCircle}>
+        <Ionicons name="star-outline" size={28} color={Colors.primary} />
+      </View>
+      <Text style={styles.revealTitle}>How did your study date go?</Text>
+      <Text style={styles.revealDesc}>
+        Rate your last study date — it only takes a few seconds and helps keep
+        StudyMatch trustworthy.
+      </Text>
+      <TouchableOpacity style={styles.btnReveal} onPress={onRate}>
+        <Text style={styles.btnRevealText}>Rate Study Date</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -95,6 +117,9 @@ export default function ChatScreen({
     route?.params?.matchId ?? null,
   );
   const [partnerName, setPartnerName] = useState('');
+  const [eligibleSurvey, setEligibleSurvey] = useState<{ id: string } | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
@@ -134,6 +159,7 @@ export default function ChatScreen({
         // No active match — the empty state below explains it.
         setMessages([]);
         setPartnerName('');
+        setEligibleSurvey(null);
         return;
       }
 
@@ -169,6 +195,42 @@ export default function ChatScreen({
         return;
       }
       setMessages((rows ?? []).map(mapMessageFromAPI));
+
+      // Phase 5 post-date survey: find the most recent past, non-cancelled study
+      // date in this match that this user hasn't reviewed yet. Gated on
+      // status <> 'cancelled' rather than status = 'accepted' — there's no
+      // "accept" flow anywhere in StudyDatePlannerScreen.tsx today, so every
+      // real study date stays 'pending' forever; requiring 'accepted' would
+      // make the survey silently unreachable.
+      // No .limit() here — an earlier version capped this at 5, which could
+      // silently hide an older unreviewed date if the 5 most recent had all
+      // already been rated. A single match realistically has few study dates,
+      // so fetching all of them is simpler than paginating.
+      const { data: pastDates } = await supabase
+        .from('study_dates')
+        .select('id, scheduled_time')
+        .eq('match_id', resolvedMatchId)
+        .neq('status', 'cancelled')
+        .lt('scheduled_time', new Date().toISOString())
+        .order('scheduled_time', { ascending: false });
+
+      if (pastDates?.length) {
+        const { data: myReviews } = await supabase
+          .from('post_date_surveys')
+          .select('study_date_id')
+          .eq('reviewer_id', userId)
+          .in(
+            'study_date_id',
+            pastDates.map(d => d.id),
+          );
+        const reviewedIds = new Set(
+          (myReviews ?? []).map(r => r.study_date_id),
+        );
+        const nextUnreviewed = pastDates.find(d => !reviewedIds.has(d.id));
+        setEligibleSurvey(nextUnreviewed ? { id: nextUnreviewed.id } : null);
+      } else {
+        setEligibleSurvey(null);
+      }
     } catch (e: any) {
       setError(e?.message ?? 'Failed to load chat.');
     } finally {
@@ -176,9 +238,15 @@ export default function ChatScreen({
     }
   }, [route?.params?.matchId]);
 
-  useEffect(() => {
-    loadChat();
-  }, [loadChat]);
+  // useFocusEffect alone covers both initial mount and every later focus (e.g.
+  // returning from PostDateSurveyScreen after submitting, so the survey banner
+  // clears immediately) — a separate mount-only useEffect would just double the
+  // initial load, firing loadChat()'s four sequential queries twice at once.
+  useFocusEffect(
+    useCallback(() => {
+      loadChat();
+    }, [loadChat]),
+  );
 
   async function handleSend() {
     const content = inputText.trim();
@@ -194,7 +262,7 @@ export default function ChatScreen({
         setError(insertError.message);
         return;
       }
-      setMessages((prev) => [...prev, mapMessageFromAPI(row)]);
+      setMessages(prev => [...prev, mapMessageFromAPI(row)]);
       setInputText('');
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
     } catch (e: any) {
@@ -250,7 +318,9 @@ export default function ChatScreen({
           </View>
           <View>
             <Text style={styles.headerTitle}>Physics Partner</Text>
-            <Text style={styles.headerSubtitle}>{partnerName || 'Anonymous Match'}</Text>
+            <Text style={styles.headerSubtitle}>
+              {partnerName || 'Anonymous Match'}
+            </Text>
           </View>
         </View>
 
@@ -315,13 +385,26 @@ export default function ChatScreen({
           )}
 
           {/* Messages */}
-          {messages.map((msg) => (
+          {messages.map(msg => (
             <MessageBubble
               key={msg.id}
               message={msg}
               currentUserId={currentUserId}
             />
           ))}
+
+          {/* Post-date survey banner (Phase 5) — shown above the reveal card
+              when there's a past, unreviewed study date for this match. */}
+          {!loading && !error && matchId != null && eligibleSurvey && (
+            <SurveyBanner
+              onRate={() =>
+                navigation.navigate('PostDateSurvey', {
+                  studyDateId: eligibleSurvey.id,
+                  partnerName,
+                })
+              }
+            />
+          )}
 
           {/* Reveal card */}
           {!loading && !error && matchId != null && <RevealCard />}

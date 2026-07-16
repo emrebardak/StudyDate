@@ -32,10 +32,11 @@ cd ios && bundle exec pod install && cd ..
 
 [`src/navigation/AppNavigator.tsx`](../StudyMatch/src/navigation/AppNavigator.tsx):
 - Root `Stack.Navigator` wraps `MainTabs` (bottom-tab navigator with 5 tabs: Dashboard / Match / Chats / Planner / Profile)
-- Secondary/modal screens (`StudentProfile`, `EditProfile`, `Filter`, `StudyDatePlanner`-as-modal) live on the root stack
+- **The `'Chats'` tab renders `ConversationsListScreen`, not `ChatScreen`, as of Session 15** — a live conversation thread is the `'Chat'` route (`{ matchId }`) on the root stack, reached by tapping a row in the list. This was a deliberate fix, not a refactor for its own sake: `ChatScreen` used to be the tab component directly with a no-param "fall back to my current active match" resolver, which made any match that had ended (via manual termination or the Phase 5 cron sweep) permanently unreachable from the tab bar
+- Secondary/modal screens (`StudentProfile`, `EditProfile`, `Filter`, `StudyDatePlanner`-as-modal, `PostDateSurvey`-as-modal) and `Chat` live on the root stack
 - `navigation.navigate('Filter')` from a tab screen relies on React Navigation's automatic forwarding to the parent stack — this is expected, not a bug
 - On launch, calls `supabase.auth.getSession()` once (shown as a brief splash spinner) and sets `initialRouteName` to `MainTabs` if a session already exists, otherwise `RegisterVerification` — a returning user with a valid session skips registration entirely
-- `MatchFoundScreen` is a real file (`src/screens/MatchFoundScreen.tsx`) but is **not currently registered** in this stack, and its "Start Chat" button navigates to a `'Chat'` route that doesn't exist (the tab is `'Chats'`) — currently unreachable in the running app
+- `MatchFoundScreen` is a real file (`src/screens/MatchFoundScreen.tsx`) but is **not currently registered** in this stack. Its "Start Chat" button navigates to `'Chat'`, which as of Session 15 **is** a real registered route (`ChatScreen`, moved off the `'Chats'` tab) — but the screen itself is still unregistered/unreachable, and its `matchId: 'new'` param is still hardcoded nonsense, so this is unchanged in practice
 
 **Type safety**: `RootStackParamList` and `TabParamList` in [`src/types/index.ts`](../StudyMatch/src/types/index.ts) — extend these, never use untyped `navigation: any` params for new routes.
 
@@ -72,6 +73,12 @@ When wiring real data (Supabase):
 - Real message history loaded on mount (no live Realtime subscription yet — messages don't push live, only load-on-mount/refetch)
 - Header subtitle shows the matched partner's real `name` (fetched via the match's `user1_id`/`user2_id` → `users_select_matched` RLS), falling back to "Anonymous Match" only while unresolved — names are not part of the photo-blur progressive disclosure, only photos stay hidden until mutual reveal
 - Reveal button drives mutual `both_revealed` flow (currently visual state only)
+- **Not a tab component anymore (Session 15)** — lives on the root stack as the `'Chat'` route (`{ matchId }`), reached from `ConversationsListScreen.tsx` (the actual `'Chats'` tab) or directly from `DiscoveryScreen.tsx`'s Lock System handlers. Its own no-`matchId` "fall back to my active match" logic still exists but is no longer the primary path — don't remove it, other call sites may still rely on it.
+- Post-date survey banner (Phase 5, Session 14): shown when an unreviewed past `study_dates` row exists for this match — the eligibility query has **no `.limit()`** (a Session 14 version capped it at 5, which could silently hide an older unreviewed date; removed in Session 15) — don't reintroduce a cap without pagination to match
+
+**Conversations List** ([`ConversationsListScreen.tsx`](../StudyMatch/src/screens/ConversationsListScreen.tsx), new in Session 15)
+- The real `'Chats'` tab component now — lists every match the caller is part of (active or ended), not just the current one, so an ended match's chat (and its survey banner) stays reachable. Tapping a row navigates to `'Chat', { matchId }`.
+- This is what finally exercises the long-open "Chats-tab entry: a conversations list" item from Sessions 4/5's dev log
 
 **Registration Step 1 / Login** ([`RegisterVerificationScreen.tsx`](../StudyMatch/src/screens/RegisterVerificationScreen.tsx))
 - Doubles as the login screen: a `mode` toggle (`'signup' | 'login'`) switches the same email/password fields between `supabase.auth.signUp` → `RegisterProfile` and `supabase.auth.signInWithPassword` → `navigation.reset` straight to `MainTabs`
@@ -88,14 +95,19 @@ When wiring real data (Supabase):
 
 **My Profile** ([`MyProfileScreen.tsx`](../StudyMatch/src/screens/MyProfileScreen.tsx))
 - Fetches own profile on mount and on tab focus; Academic Details/Badges/photos all read straight off the `users` row (`university`/`department`/`year`/`badges`/`photo_url`/`photos`)
-- `badges` is normally `{}` for every real user today (Phase 5's post-date survey isn't built) — the empty state is expected, not a bug
+- `badges` is normally `{}` for a new user (populated by the Phase 5 post-date survey once study dates actually happen, see backend-dev.md/`docs/development.md` Session 14) — the empty state is expected for anyone without a completed study date yet, not a bug
 - "Log Out" button (below Edit Profile) confirms via `Alert`, calls `supabase.auth.signOut()`, then `navigation.reset`s to `RegisterVerification`
-- `EditProfileScreen.tsx` is NOT wired (still fully mock, including a hardcoded avatar URL and a no-op Save) — next natural gap if picking this area back up
+
+**Edit Profile** ([`EditProfileScreen.tsx`](../StudyMatch/src/screens/EditProfileScreen.tsx))
+- Now wired (was the last mock screen; wired in Session 13) — loads the own `users` row on mount, saves `university`/`department`/`year`/`bio`/`current_tags` via a single `update().eq('id', userId)`
+- `year`'s dropdown is hard-limited to `Freshman`/`Sophomore`/`Junior`/`Senior` — that's a DB `CHECK` constraint, not a style choice; don't add other options without a migration
+- Its `STUDY_TRAITS` list must stay in sync (same key strings) with `RegisterTraitsScreen.tsx`'s `TRAITS` — both write into the same free-text `current_tags` column, so a tag picked at signup needs to show as selected here too
+- Photo upload (avatar + gallery) is explicitly NOT wired — no image-picker dependency and no Storage bucket exist yet; both surfaces show a "Coming soon" alert instead of doing nothing silently
 
 **Match Found** ([`MatchFoundScreen.tsx`](../StudyMatch/src/screens/MatchFoundScreen.tsx))
 - Shows the real matched partner's name (fetched via the current user's `active_match_id`, no route param needed — the Lock System guarantees at most one active match), falling back to "your study partner" while unresolved
 - Everything else on this screen is still mock (98% "synergy" score, subject name) and it has its own local color constants instead of `src/theme`
-- **Not currently reachable**: not registered in `AppNavigator.tsx`'s `Stack.Navigator`, and its "Start Chat" button navigates to a `'Chat'` route that doesn't exist
+- **Not currently reachable**: not registered in `AppNavigator.tsx`'s `Stack.Navigator`. Its "Start Chat" button's `'Chat'` route now exists (Session 15) but its `matchId: 'new'` param is still hardcoded — registering the screen alone wouldn't be enough to make this button work correctly
 
 ### State Handoff Pattern (Without a Global Store)
 

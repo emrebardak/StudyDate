@@ -9,6 +9,7 @@ import { supabase } from '../lib/supabase';
 import DashboardScreen from '../screens/DashboardScreen';
 import DiscoveryScreen from '../screens/DiscoveryScreen';
 import ChatScreen from '../screens/ChatScreen';
+import ConversationsListScreen from '../screens/ConversationsListScreen';
 import StudyDatePlannerScreen from '../screens/StudyDatePlannerScreen';
 import MyProfileScreen from '../screens/MyProfileScreen';
 import StudentProfileScreen from '../screens/StudentProfileScreen';
@@ -18,6 +19,7 @@ import RegisterVerificationScreen from '../screens/RegisterVerificationScreen';
 import RegisterProfileScreen from '../screens/RegisterProfileScreen';
 import RegisterTraitsScreen from '../screens/RegisterTraitsScreen';
 import RegisterFinalScreen from '../screens/RegisterFinalScreen';
+import PostDateSurveyScreen from '../screens/PostDateSurveyScreen';
 
 import { Colors, Typography, Spacing } from '../theme';
 import type { RootStackParamList, TabParamList } from '../types';
@@ -56,7 +58,7 @@ function MainTabs() {
     >
       <Tab.Screen name="Dashboard" component={DashboardScreen} />
       <Tab.Screen name="Match" component={DiscoveryScreen} />
-      <Tab.Screen name="Chats" component={ChatScreen} />
+      <Tab.Screen name="Chats" component={ConversationsListScreen} />
       <Tab.Screen name="Planner" component={StudyDatePlannerScreen} />
       <Tab.Screen name="Profile" component={MyProfileScreen} />
     </Tab.Navigator>
@@ -98,12 +100,18 @@ export default function AppNavigator() {
         <Stack.Screen name="RegisterTraits" component={RegisterTraitsScreen} />
         <Stack.Screen name="RegisterFinal" component={RegisterFinalScreen} />
         <Stack.Screen name="MainTabs" component={MainTabs} />
+        <Stack.Screen name="Chat" component={ChatScreen} />
         <Stack.Screen name="StudentProfile" component={StudentProfileScreen} />
         <Stack.Screen name="EditProfile" component={EditProfileScreen} />
         <Stack.Screen name="Filter" component={FilterScreen} />
         <Stack.Screen
           name="StudyDatePlanner"
           component={StudyDatePlannerScreen}
+          options={{ presentation: 'transparentModal', animation: 'fade' }}
+        />
+        <Stack.Screen
+          name="PostDateSurvey"
+          component={PostDateSurveyScreen}
           options={{ presentation: 'transparentModal', animation: 'fade' }}
         />
       </Stack.Navigator>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -7,29 +7,38 @@ import {
   ScrollView,
   StyleSheet,
   Image,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography } from '../theme';
+import { supabase } from '../lib/supabase';
+import { mapUserFromAPI } from '../data/mappers';
+import type { User } from '../types';
 
-const AVATAR_IMAGE =
-  'https://lh3.googleusercontent.com/aida-public/AB6AXuAfRtCEqvKjIKG2VLK99NasCZa2LkEUJlnwuAHa7TPIr3lv_Oz6pqoqyCMrCdm4Y8QKkJya7EKioOdPBV2wVRORXXGpFJeCqNvewmX3tu2Q6EFlEY7hUIV0Pmzbjy0ErMfJez0nLsxVXQ9WN5IT1zBGhtx_6Zb-76B6yxgfvIMA8fG7KxPCzF2xp3sk11521UG0IXPnsBl7oWSSrpUqNDMr2IYt5a8ELD4cVKVtPJD04-jU2S6ODESaL4OeLCjnai2kMucQDAbkvYs';
+// Real users.year is DB-constrained to exactly these four (CHECK constraint) —
+// the values ARE the display labels now, unlike the old 6-option mock list
+// (which included 'Graduate / Masters' / 'PhD Candidate', neither a valid
+// column value, and used a "Freshman / Year 1" display format that didn't
+// match the stored value at all).
+const ACADEMIC_YEARS: NonNullable<User['year']>[] = ['Freshman', 'Sophomore', 'Junior', 'Senior'];
 
-const ACADEMIC_YEARS = [
-  'Freshman / Year 1',
-  'Sophomore / Year 2',
-  'Junior / Year 3',
-  'Senior / Year 4',
-  'Graduate / Masters',
-  'PhD Candidate',
-];
-
+// Same trait vocabulary as RegisterTraitsScreen (Step 3 of signup) — both
+// screens write into the same free-text `current_tags` column, so using two
+// different label sets for overlapping concepts (e.g. "Night Owl" vs.
+// "night-owl" / "Pomodoro" in both) would make a tag picked at signup show as
+// unselected here. Kept as its own local list (screens are self-contained,
+// per this codebase's convention) but the key strings must stay in sync.
 const STUDY_TRAITS = [
-  { id: 'night-owl', label: 'Night Owl', icon: 'moon-outline' },
-  { id: 'pomodoro', label: 'Pomodoro', icon: 'timer-outline' },
-  { id: 'textbook', label: 'Textbook Heavy', icon: 'book-outline' },
-  { id: 'discussion', label: 'Discussion Based', icon: 'people-outline' },
-  { id: 'visual', label: 'Visual Learner', icon: 'grid-outline' },
-];
+  { key: 'Night Owl', icon: 'moon-outline' },
+  { key: 'Coffee Fueled', icon: 'cafe-outline' },
+  { key: 'Early Bird', icon: 'sunny-outline' },
+  { key: 'Library Lover', icon: 'book-outline' },
+  { key: 'Group Study', icon: 'people-outline' },
+  { key: 'Solo Focus', icon: 'headset-outline' },
+  { key: 'Pomodoro', icon: 'timer-outline' },
+  { key: 'Vocal Learner', icon: 'megaphone-outline' },
+] as const;
 
 function SectionHeader({ title }: { title: string }) {
   return (
@@ -82,21 +91,131 @@ function FormInput({
   );
 }
 
+function photoComingSoon() {
+  Alert.alert('Coming soon', "Photo uploads aren't available yet.");
+}
+
 export default function EditProfileScreen({ navigation }: { navigation: any }) {
-  const [university, setUniversity] = useState('Stanford University');
-  const [department, setDepartment] = useState('Computer Science');
-  const [academicYear, setAcademicYear] = useState('Junior / Year 3');
-  const [bio, setBio] = useState(
-    'Currently researching distributed systems and consensus algorithms. Looking for study partners aiming for deep-work sessions late into the evening.',
-  );
-  const [selectedTraits, setSelectedTraits] = useState<string[]>(['night-owl', 'pomodoro']);
+  const [photoUrl, setPhotoUrl] = useState<string | undefined>(undefined);
+  const [university, setUniversity] = useState('');
+  const [department, setDepartment] = useState('');
+  const [academicYear, setAcademicYear] = useState<NonNullable<User['year']>>('Freshman');
+  const [bio, setBio] = useState('');
+  const [selectedTraits, setSelectedTraits] = useState<string[]>([]);
   const [customTrait, setCustomTrait] = useState('');
   const [yearPickerOpen, setYearPickerOpen] = useState(false);
   const [gallerySlots] = useState(3);
 
-  function toggleTrait(id: string) {
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+
+  const loadProfile = useCallback(async () => {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      const userId = auth?.user?.id;
+      if (!userId) {
+        setLoadError('Not signed in.');
+        return;
+      }
+      const { data: row, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .single();
+      if (error) {
+        setLoadError(error.message);
+        return;
+      }
+      const user = mapUserFromAPI(row);
+      setPhotoUrl(user.photoUrl);
+      setUniversity(user.university);
+      setDepartment(user.department);
+      setAcademicYear((ACADEMIC_YEARS as string[]).includes(user.year) ? user.year : 'Freshman');
+      setBio(user.bio ?? '');
+      setSelectedTraits(user.currentTags ?? []);
+    } catch (e: any) {
+      setLoadError(e?.message ?? 'Failed to load profile.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadProfile();
+  }, [loadProfile]);
+
+  function toggleTrait(key: string) {
     setSelectedTraits((prev) =>
-      prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id],
+      prev.includes(key) ? prev.filter((t) => t !== key) : [...prev, key],
+    );
+  }
+
+  function addCustomTrait() {
+    const trait = customTrait.trim();
+    if (!trait) return;
+    setSelectedTraits((prev) => (prev.includes(trait) ? prev : [...prev, trait]));
+    setCustomTrait('');
+  }
+
+  async function handleSave() {
+    setSaveError('');
+    setSaving(true);
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      const userId = auth?.user?.id;
+      if (!userId) {
+        setSaveError('Your session expired. Please sign in again.');
+        return;
+      }
+      const { error } = await supabase
+        .from('users')
+        .update({
+          university: university.trim(),
+          department: department.trim(),
+          year: academicYear,
+          bio: bio.trim(),
+          current_tags: selectedTraits,
+        })
+        .eq('id', userId);
+      if (error) {
+        setSaveError(error.message);
+        return;
+      }
+      navigation?.goBack?.();
+    } catch (e: any) {
+      setSaveError(e?.message ?? 'Failed to save. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.root}>
+        <View style={styles.stateContainer}>
+          <ActivityIndicator color={Colors.primary} size="large" />
+        </View>
+      </View>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <View style={styles.root}>
+        <View style={styles.stateContainer}>
+          <Ionicons name="warning-outline" size={52} color={Colors.textMuted} />
+          <Text style={styles.emptyTitle}>Something went wrong</Text>
+          <Text style={styles.emptySubtitle}>{loadError}</Text>
+          <TouchableOpacity style={styles.refreshBtn} onPress={loadProfile} activeOpacity={0.8}>
+            <Ionicons name="refresh-outline" size={16} color={Colors.primary} />
+            <Text style={styles.refreshBtnText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
     );
   }
 
@@ -114,12 +233,21 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
         <Text style={styles.headerTitle}>Edit Profile</Text>
 
         <TouchableOpacity
-          style={styles.saveBtn}
-          onPress={() => navigation?.goBack?.()}
+          style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
+          onPress={handleSave}
+          disabled={saving}
         >
-          <Text style={styles.saveBtnText}>Save</Text>
+          {saving ? (
+            <ActivityIndicator color={Colors.textOnYellow} size="small" />
+          ) : (
+            <Text style={styles.saveBtnText}>Save</Text>
+          )}
         </TouchableOpacity>
       </View>
+
+      {!!saveError && (
+        <Text style={styles.saveErrorText}>{saveError}</Text>
+      )}
 
       <ScrollView
         style={styles.scroll}
@@ -130,8 +258,14 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
         <SectionHeader title="Visual Presence" />
 
         <View style={styles.visualRow}>
-          <TouchableOpacity style={styles.avatarWrap} activeOpacity={0.85}>
-            <Image source={{ uri: AVATAR_IMAGE }} style={styles.avatar} />
+          <TouchableOpacity style={styles.avatarWrap} activeOpacity={0.85} onPress={photoComingSoon}>
+            {photoUrl ? (
+              <Image source={{ uri: photoUrl }} style={styles.avatar} />
+            ) : (
+              <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                <Ionicons name="person" size={40} color={Colors.textMuted} />
+              </View>
+            )}
             <View style={styles.avatarOverlay}>
               <Ionicons name="camera-outline" size={28} color={Colors.primary} />
               <Text style={styles.avatarOverlayText}>Change</Text>
@@ -149,7 +283,7 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
               contentContainerStyle={styles.galleryRow}
             >
               {Array.from({ length: gallerySlots }).map((_, i) => (
-                <TouchableOpacity key={i} style={styles.gallerySlot}>
+                <TouchableOpacity key={i} style={styles.gallerySlot} onPress={photoComingSoon}>
                   <Ionicons name="add" size={24} color={Colors.textSecondary} />
                 </TouchableOpacity>
               ))}
@@ -237,12 +371,12 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
 
           <View style={styles.traitsGrid}>
             {STUDY_TRAITS.map((trait) => {
-              const active = selectedTraits.includes(trait.id);
+              const active = selectedTraits.includes(trait.key);
               return (
                 <TouchableOpacity
-                  key={trait.id}
+                  key={trait.key}
                   style={[styles.traitChip, active && styles.traitChipActive]}
-                  onPress={() => toggleTrait(trait.id)}
+                  onPress={() => toggleTrait(trait.key)}
                 >
                   <Ionicons
                     name={trait.icon as any}
@@ -252,20 +386,39 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
                   <Text
                     style={[styles.traitLabel, active && styles.traitLabelActive]}
                   >
-                    {trait.label.toUpperCase()}
+                    {trait.key.toUpperCase()}
                   </Text>
                 </TouchableOpacity>
               );
             })}
 
+            {selectedTraits
+              .filter((t) => !STUDY_TRAITS.some((st) => st.key === t))
+              .map((custom) => (
+                <TouchableOpacity
+                  key={custom}
+                  style={[styles.traitChip, styles.traitChipActive]}
+                  onPress={() => toggleTrait(custom)}
+                >
+                  <Ionicons name="pricetag-outline" size={16} color={Colors.primary} />
+                  <Text style={[styles.traitLabel, styles.traitLabelActive]}>
+                    {custom.toUpperCase()}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+
             <View style={styles.customTraitRow}>
-              <Ionicons name="add" size={16} color={Colors.textSecondary} />
+              <TouchableOpacity onPress={addCustomTrait} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="add" size={16} color={Colors.textSecondary} />
+              </TouchableOpacity>
               <TextInput
                 style={styles.customTraitInput}
                 placeholder="Add custom trait..."
                 placeholderTextColor={Colors.textMuted}
                 value={customTrait}
                 onChangeText={setCustomTrait}
+                onSubmitEditing={addCustomTrait}
+                returnKeyType="done"
               />
             </View>
           </View>
@@ -282,6 +435,46 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
+
+  // Loading / Error state
+  stateContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.xxl,
+    gap: Spacing.md,
+  },
+  emptyTitle: {
+    fontSize: Typography.size.xl,
+    fontWeight: Typography.weight.bold,
+    color: Colors.textPrimary,
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    fontSize: Typography.size.md,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  refreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginTop: Spacing.base,
+    backgroundColor: Colors.surface,
+    borderWidth: 1.5,
+    borderColor: Colors.borderGold,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+  },
+  refreshBtnText: {
+    fontSize: Typography.size.sm,
+    fontWeight: Typography.weight.semibold,
+    color: Colors.primary,
+    letterSpacing: 0.5,
+  },
+
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -306,6 +499,8 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     paddingHorizontal: Spacing.lg,
     paddingVertical: 6,
+    minWidth: 56,
+    alignItems: 'center',
     ...{
       shadowColor: Colors.primary,
       shadowOffset: { width: 0, height: 0 },
@@ -314,10 +509,19 @@ const styles = StyleSheet.create({
       elevation: 4,
     },
   },
+  saveBtnDisabled: {
+    opacity: 0.7,
+  },
   saveBtnText: {
     fontSize: Typography.size.base,
     fontWeight: Typography.weight.semibold,
     color: Colors.textOnYellow,
+  },
+  saveErrorText: {
+    fontSize: Typography.size.sm,
+    color: Colors.danger,
+    paddingHorizontal: Spacing.base,
+    paddingTop: Spacing.sm,
   },
   scroll: { flex: 1 },
   scrollContent: {
@@ -352,6 +556,11 @@ const styles = StyleSheet.create({
   avatar: {
     width: '100%',
     height: '100%',
+  },
+  avatarPlaceholder: {
+    backgroundColor: Colors.surfaceMid,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   avatarOverlay: {
     ...StyleSheet.absoluteFill,

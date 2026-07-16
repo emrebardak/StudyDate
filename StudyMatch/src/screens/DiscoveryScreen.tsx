@@ -156,6 +156,7 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [locked, setLocked] = useState(false);
+  const [lockedMatchId, setLockedMatchId] = useState<string | null>(null);
   const [swipeErrorBanner, setSwipeErrorBanner] = useState<string | null>(null);
 
   const position = useRef(new Animated.ValueXY()).current;
@@ -218,9 +219,11 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
       }
       if (ownRow?.active_match_id) {
         setLocked(true);
+        setLockedMatchId(ownRow.active_match_id);
         return;
       }
       setLocked(false);
+      setLockedMatchId(null);
 
       const { data: rows, error: candidatesError } = await supabase
         .from('discoverable_users')
@@ -269,7 +272,13 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
       if (!row) return;
       if (row.status === 'active') {
         setLocked(true);
-        navigation.navigate('MainTabs', { screen: 'Chats' });
+        setLockedMatchId(row.id);
+        // Jump straight into the live thread via the matchId-addressed 'Chat'
+        // route, not the 'Chats' tab — that tab is now a conversations list
+        // (added to fix a stale-match reachability bug), so navigating there
+        // instead would land the user on a list needing an extra tap instead
+        // of the just-formed conversation itself.
+        navigation.navigate('Chat', { matchId: row.id });
       } else {
         setLocked(false);
         loadDiscovery();
@@ -412,7 +421,11 @@ export default function DiscoveryScreen({ navigation, route }: { navigation: any
     if (locked) {
       return (
         <LockedState
-          onGoToChat={() => navigation.navigate('MainTabs', { screen: 'Chats' })}
+          onGoToChat={() =>
+            lockedMatchId
+              ? navigation.navigate('Chat', { matchId: lockedMatchId })
+              : navigation.navigate('MainTabs', { screen: 'Chats' })
+          }
         />
       );
     }

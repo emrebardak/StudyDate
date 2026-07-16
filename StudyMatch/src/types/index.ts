@@ -143,6 +143,7 @@ export type RootStackParamList = {
   RegisterProfile: { data: Partial<RegistrationData> };
   RegisterTraits: { data: Partial<RegistrationData> };
   RegisterFinal: { data: Partial<RegistrationData> };
+  PostDateSurvey: { studyDateId: string; partnerName?: string };
 };
 
 export type TabParamList = {

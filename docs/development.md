@@ -433,5 +433,151 @@ Both screens showed placeholder names even though `users_select_matched` RLS (Ph
 ### Next steps (suggested)
 - [ ] Register `MatchFoundScreen` in `AppNavigator.tsx`'s stack and fix its `'Chat'` → `'Chats'` route name mismatch, or confirm with the user whether this screen is still meant to be used at all
 - [ ] On-device verification pass for all four Session 12 changes (see Verified above) — nothing in this session has been exercised outside `tsc`
-- [ ] Wire `EditProfileScreen.tsx` to real data (still fully mock, flagged since Session 11)
 - [ ] Incomplete-registration gap (Session 9, item 4) — still open
+
+---
+
+## Session 13 — Wire EditProfileScreen.tsx to real data (last mock screen)
+
+### What was done
+
+Last screen still on mock data (flagged since Session 11, confirmed still true after Session 12). No backend/migration changes — every field this screen edits (`university`, `department`, `year`, `bio`, `current_tags`) is already covered by the existing `users_update_own` RLS policy (Migration 4); nothing here needed a new policy the way Session 11's Recently Liked did.
+
+Two real mismatches surfaced while wiring this up, resolved before writing any code (see the AskUserQuestion note below for the third):
+
+1. **Academic Year format/values**: the mock `ACADEMIC_YEARS` list had 6 options styled `"Freshman / Year 1"`, but `users.year` is DB-constrained (`CHECK`) to exactly `Freshman`/`Sophomore`/`Junior`/`Senior` — two of the six mock options (`Graduate / Masters`, `PhD Candidate`) would fail to save at all, and even the valid four were stored/read as a different string than the value the dropdown offered. Trimmed the list to the four real values, used directly as both the stored value and the display label. **Confirmed this was necessary, not just cautious**: the verification script explicitly attempted `year: 'PhD Candidate'` and got `new row for relation "users" violates check constraint "users_year_check"` back from Postgres.
+2. **Trait vocabulary mismatch**: `EditProfileScreen`'s mock `STUDY_TRAITS` (`night-owl`, `pomodoro`, `textbook`, `discussion`, `visual`) and `RegisterTraitsScreen`'s `TRAITS` (`Night Owl`, `Coffee Fueled`, `Early Bird`, `Library Lover`, `Group Study`, `Solo Focus`, `Pomodoro`, `Vocal Learner`) both write into the same free-text `current_tags` column but never agreed on a vocabulary — a tag picked at signup wouldn't show as selected here. Replaced Edit Profile's list with the exact same 8 keys/labels as registration (kept as its own local const, matching this codebase's per-screen self-contained convention — just with synced key strings). Also wired the previously-inert "Add custom trait..." input (had no submit handler in the mock at all) to actually append arbitrary tags to `current_tags`, and render any already-saved tag that isn't in the fixed 8 as its own selected chip rather than silently dropping it on the next Save.
+3. **Photo upload scope** — asked the user directly rather than assuming: real upload needs a new native dependency (`react-native-image-picker`; `expo-image-picker` is off-limits per this repo) plus a Supabase Storage bucket + RLS, a materially bigger lift than the rest of the screen (native rebuild both platforms, plus this repo's known Windows long-path risk for native modules). User chose text-fields-only for now. Avatar/gallery slots stay non-functional, but now show the user's real `photo_url` when one exists (none do yet — no upload path exists anywhere in the app) instead of the mock's hardcoded stock photo URL, and tapping them shows an explicit "Coming soon" alert instead of doing nothing silently.
+
+#### Frontend — `EditProfileScreen.tsx` only
+- Loads the caller's own `users` row on mount (`loadProfile`, mirroring Session 11's load pattern) into local form state; full-screen loading/error states matching Dashboard/My Profile.
+- `handleSave`: `supabase.from('users').update({ university, department, year, bio, current_tags }).eq('id', userId)`, `saving` state disables the header Save button and swaps it for a spinner (matching `RegisterFinalScreen`'s established pattern), inline error text on failure, `navigation.goBack()` on success — which lands back on `MyProfileScreen`, whose Session 11 `useFocusEffect` refresh picks up the change immediately.
+- All UI structure/styles preserved as-is (per this repo's wiring convention) — only the data source, the two vocab/format fixes above, and the previously-dead custom-trait input and photo-tap handlers changed.
+
+#### Verified
+- `npx tsc --noEmit` — **0 errors**.
+- Full REST round-trip via a real `@supabase/supabase-js` script (`edit_profile_real_data_test.mjs`): confirmed a freshly-registered user's row genuinely has no `university`/`year`/`bio`/`current_tags` set (registration never collects them — this screen is their first source), then replicated `handleSave`'s exact payload — a fixed trait (`Night Owl`) plus a typed-in custom one (`Marathon Runner`) together in `current_tags`, `year: 'Sophomore'` — re-fetched and confirmed every field round-tripped exactly. The invalid-year negative check above was run in the same script.
+- **Not verified on-device** — no emulator/browser access in this environment; same limitation Session 12 flagged for its own changes. UI layout/interaction (dropdown open/close, chip toggling, keyboard behavior) is unverified beyond type-checking.
+
+### Next steps (suggested)
+- [ ] On-device verification pass for this session's changes, ideally bundled with Session 12's still-open on-device pass
+- [ ] Photo upload (avatar + gallery) — explicitly deferred this session; needs `react-native-image-picker` + a Storage bucket/RLS migration
+- [ ] Incomplete-registration gap (Session 9, item 4) — still open
+
+---
+
+## Session 14 — Backend Phase 5: trust score, post-date survey, match-timeout cron
+
+### What was done
+
+Last phase in `implemention.md`'s phased plan. Went through Plan Mode first (unlike most earlier phases) because the PRD is underspecified/self-inconsistent in two places — both resolved explicitly rather than guessed at silently:
+
+1. **PRD §7's trust score has 3 tiers (+2 success / −10 last-minute-cancel / −25 no-show), but the post-date survey's Q1 is a binary Yes/No** with no attribution mechanism anywhere in the schema for *who* cancelled or *when* relative to the scheduled time. Implemented only the two tiers the survey can actually express (+2 / −25); the −10 tier is a flagged, deferred gap, not a hidden bug.
+2. **`study_dates.status` never reaches `'accepted'`** — confirmed no "accept" flow exists anywhere in `StudyDatePlannerScreen.tsx`; every real study date stays `'pending'` forever. Gating survey eligibility on `status='accepted'` would have made the whole feature silently unreachable. Gated instead on `status <> 'cancelled' AND scheduled_time < NOW()`.
+
+Verified empirically before writing any code: `sync_active_match_id()` (Migration 7) already generically releases the Lock System hold for both participants on *any* `matches.status` transition away from `'active'`, so the cron sweep only needs to flip the status — confirmed by reading its source, not assumed. Also confirmed `pg_cron` is already preloaded in this stack's `shared_preload_libraries` via a throwaway `CREATE EXTENSION`/`DROP EXTENSION` round-trip before committing to the design.
+
+#### Backend — two migrations
+
+**`post_date_surveys.sql` (Migration 14)** — `public.post_date_surveys` table (`study_date_id`, `reviewer_id`, `target_id`, `met`, `environment`, `badge`, `UNIQUE(study_date_id, reviewer_id)`, `CHECK (reviewer_id <> target_id)`, `CHECK (met = FALSE OR environment IS NOT NULL)`) with `SELECT`-only RLS scoped to `reviewer_id = auth.uid()` (a user sees what *they* submitted, never what was submitted about them — matches PRD §7's "hidden trust score" framing) and **no INSERT grant at all**. Every write goes through `submit_post_date_survey(study_date_id, met, environment, badge)`, `SECURITY DEFINER`:
+- Confirms the caller is a genuine participant of the study date's match; rejects a future-dated study date.
+- **Derives `target_id` server-side** ("the other participant") — never accepted as a client parameter, same reasoning as `form_match_on_mutual_swipe()` deriving match participants itself rather than trusting client input.
+- Computes the trust delta from **fixed constants only** (`met → +2`, else `−25`) inline in the function. Deliberately does **not** expose a general `apply_trust_delta(user_id, delta)` RPC with a free-form integer delta and arbitrary target — `docs/backend-dev.md`'s example code showing exactly that shape is illustrative pseudocode, not something to expose literally; a raw signed delta + arbitrary target callable by any authenticated client would be a direct trust-score forgery vector, the same class of gap Sessions 6/8/10 each found and closed elsewhere in this schema. Closed here from the start instead of built-then-fixed.
+- Increments `badges->>badge` on the target if a badge was given (optional even when `met=true`).
+- A resubmission hits the `UNIQUE(study_date_id, reviewer_id)` constraint (`23505`) and propagates unmodified — no silent double-apply.
+
+**Caught during implementation, before this was ever reported as done**: Postgres grants `EXECUTE` on new functions to `PUBLIC` by default (unlike table DML, which this project has repeatedly found `authenticated` has *no* default privilege on). An empirical check (`has_function_privilege('anon', ...)`) showed `anon` could call `submit_post_date_survey` despite no explicit grant anywhere — the internal `auth.uid()` check would likely still reject an anon caller in practice, but that's not a substitute for least-privilege. Fixed by adding `REVOKE EXECUTE ... FROM PUBLIC` before the `GRANT ... TO authenticated`, matching how `anon` is locked out of everything else in this schema explicitly rather than incidentally. Edited directly into Migration 14 (not a follow-up migration) since this was caught within the same session, before any `db reset` checkpoint or report to the user.
+
+**`match_timeout_cron.sql` (Migration 15)** — `CREATE EXTENSION IF NOT EXISTS pg_cron`, `expire_stale_matches()` (`REVOKE EXECUTE FROM PUBLIC` — sweeps *all* stale matches with no per-caller scoping, must never be directly callable), and `cron.schedule('match-timeout-sweep', '*/15 * * * *', ...)`. The function is a single `UPDATE matches SET status='expired' WHERE status='active' AND updated_at < NOW()-12h AND NOT EXISTS(recent message)` — atomic by Postgres's normal statement-level guarantee. Deliberately does **not** also null `active_match_id` — the existing `sync_active_match_id()` trigger already does that generically, and duplicating it would be redundant logic that could drift out of sync over time.
+
+#### Frontend
+- **`PostDateSurveyScreen.tsx`** (new, modal, registered in `AppNavigator.tsx` following `StudyDatePlanner`'s exact `transparentModal` registration shape) — Q1 Yes/No (No submits immediately with no environment/badge asked, since those don't make sense for a meeting that didn't happen); Yes reveals Q2 (environment, required, single-select chip) and Q3 (badge, optional, single-select chip) before enabling Submit. `23505` from the RPC is mapped to "You already rated this study date" instead of a generic error.
+- **`ChatScreen.tsx`** — added the eligibility query (past, non-cancelled study dates for the active match, diffed against the caller's own `post_date_surveys` rows) and a new `SurveyBanner` (cloned from the existing `RevealCard` visual pattern) that appears above the reveal card when an unreviewed past study date exists. **Also added `useFocusEffect`, which this screen did not have before** (the Phase 5 plan incorrectly assumed it already did) — needed so the banner clears immediately on returning from the survey instead of staying stale.
+- `RootStackParamList` gained `PostDateSurvey: { studyDateId, partnerName? }`.
+
+#### Verified
+- SQL-level (`docker exec ... psql`, `SET LOCAL request.jwt.claims`): a genuine participant's survey lands the correct delta/badge on the **target only** (confirmed reviewer's own score unchanged); a bystander is rejected (`ST005`); a future-dated study date is rejected (`ST006`); resubmission hits `23505`; the `environment`-required-if-`met` `CHECK` constraint holds even for a raw `INSERT` bypassing the RPC.
+- Cron sweep, direct invocation: a match stale >12h with no messages expires and — via the *existing, unmodified* `sync_active_match_id()` trigger — both users' `active_match_id` clear together; a match with a recent message does **not** expire despite an equally stale `updated_at`, confirming the messages check (not `updated_at` freshness) is what actually protects active conversations.
+- EXECUTE privilege, empirically for all three states: `authenticated` can call `submit_post_date_survey` (`t`), `anon` cannot (`f`, after the fix above), `authenticated` cannot call `expire_stale_matches` (`f`).
+- Full REST round-trip via real `@supabase/supabase-js` scripts (`phase5_survey_test.mjs`, `phase5_chat_banner_test.mjs`): two real accounts, mutual-swipe match, real past `study_dates` row, both submit surveys rating each other — confirmed `trust_score`/`badges` land on the correct side via a fresh `GET`; confirmed a direct client `INSERT` into `post_date_surveys` and a direct client call to `expire_stale_matches` are both rejected over real REST, not just at the RLS-policy level; separately replicated `ChatScreen`'s exact eligibility query for 5 scenarios (no dates / future date / cancelled date / real past date / cleared-after-submit, per-reviewer not shared) — all correct.
+- `npx supabase db reset` — all 15 migrations replay clean.
+- `npx tsc --noEmit` — **0 errors**.
+- **Not verified on-device** — no emulator/browser access in this environment, same limitation as Sessions 12-13.
+
+### Next steps (suggested)
+- [ ] On-device verification pass (bundled with Sessions 12-13's still-open passes)
+- [ ] The deferred `-10` last-minute-cancel trust tier — needs a product decision on cancellation attribution (who cancelled, what counts as "last-minute") before it can be built
+- [ ] The missing study-date "accept" flow (`status` never reaches `'accepted'`) — a pre-existing gap this session worked around, not created
+- [ ] Photo upload (Session 13) — still deferred
+- [ ] Incomplete-registration gap (Session 9) — still open
+
+---
+
+## Session 15 — Survey banner reachability + eligibility-query truncation fix (bug-hunt follow-up on Session 14)
+
+### What was done
+
+A bug-hunt audit of Session 14 found two real gaps, both confirmed via a live DB audit (not just code reading) before any fix was written:
+
+**Gap 1 — the survey banner was unreachable for any match that had already ended.** `ChatScreen.tsx`'s `loadChat()` resolves which match to show via `route.params.matchId ?? (the caller's single ACTIVE match)`. The 'Chats' tab rendered `ChatScreen` directly with no params, so once a match left `'active'` (via `handleEndMatch` or the new Phase 5 cron sweep), there was no way back into that specific conversation at all — not just no survey banner, the whole thread became unreachable. This was the sharp edge of a long-standing, previously-flagged-but-never-built gap ("Chats-tab entry: a conversations list," open since Sessions 4/5). Confirmed via RLS review that `matches_select_participant` and the `study_dates`/`post_date_surveys` SELECT policies are **not** scoped to `status='active'` — a participant can already read their own past matches/dates/survey history over REST; this was purely a missing frontend entry point, never a permissions gap.
+
+**Gap 2 — the eligibility query's `.limit(5)`** on the past-study-dates fetch (added in Session 14) meant that if a match had more than 5 past study dates and the 5 most recent were all already reviewed, an older unreviewed 6th+ date could never surface a survey prompt — silently, with no error.
+
+#### Fix 1 — a real conversations list, `ChatScreen` addressed by `matchId`
+
+- New **`ConversationsListScreen.tsx`**: lists every match the caller is part of (`auth.uid() IN (user1_id, user2_id)`, ordered by `updated_at DESC`), active or ended, with partner name (batched lookup, not N+1) and an Active/Ended status row. Tapping a row navigates to a **newly registered root-stack `'Chat'` route** (`{ matchId }`) — this type already existed unused in `RootStackParamList` (`Chat: { matchId: string }`, added whenever `MatchFoundScreen.tsx` was built but never wired to an actual `Stack.Screen`, per Session 12's dev log flagging `MatchFoundScreen`'s `navigation.navigate('Chat', ...)` as pointing to a route that didn't exist). Registering it now happens to also be the exact prerequisite that already-flagged `MatchFoundScreen` gap needs — not fixed here (still unregistered/unreachable itself, still out of scope), but no longer blocked by a missing route.
+- `AppNavigator.tsx`: the `'Chats'` **tab** now renders `ConversationsListScreen` instead of `ChatScreen` directly; `ChatScreen` moved to the root stack under the new `'Chat'` route.
+- **Self-caused regression, fixed in the same pass**: turning the `'Chats'` tab into a list meant `DiscoveryScreen.tsx`'s two `navigation.navigate('MainTabs', { screen: 'Chats' })` call sites (the Realtime lock-formation handler, and `LockedState`'s "Go to Chat" button) would have landed the user on a list requiring an extra tap, instead of the live thread directly — a real UX regression of the already-verified (Session 7/10) "you just matched" flow. Both now navigate straight to `'Chat', { matchId }` — the Realtime handler already had `row.id` available; `LockedState`'s button needed a new `lockedMatchId` state var (set alongside the existing `locked` boolean in `loadDiscovery()`), with a defensive fallback to the tab if it's ever null.
+- `ChatScreen.tsx`'s existing no-param "fall back to the active match" logic is unchanged (kept as a defensive fallback, no longer the primary path since the tab no longer relies on it).
+
+#### Fix 2 — removed the `.limit(5)`
+
+`ChatScreen.tsx`'s past-study-dates query no longer caps at 5 — a single match realistically has few study dates, so fetching all of them is simpler than paginating and can't silently hide an older unreviewed one again.
+
+#### Verified
+- Real REST script (`reachability_fix_test.mjs`): formed a real match, added a real past study date, ended the match via the same `matches.update({status:'terminated'})` call `handleEndMatch` makes, confirmed the match **still appears** in `ConversationsListScreen`'s query (status `'terminated'`) and its survey banner is still findable once addressed by `matchId` — proving the exact reported gap is closed. Separately: created 6 real past study dates in one match, reviewed the 5 most recent via the real `submit_post_date_survey` RPC, confirmed the fixed (unlimited) query still surfaces the 6th, older, unreviewed date — reproducing and then closing the truncation bug in the same script.
+- `npx tsc --noEmit` — **0 errors**.
+- Confirmed no other call sites in `src/` still navigate to `MainTabs`/`'Chats'` expecting a live thread (`grep` across `src/`) other than `DiscoveryScreen.tsx`'s intentional defensive fallback.
+- **Not verified on-device** — no emulator/browser access in this environment, same limitation as Sessions 12-14. The user's report that prompted this fix was itself produced via "a live DB audit," not an on-device click-through, so the underlying data-reachability claim was independently confirmed at that same level (SQL/REST), not assumed from the report alone.
+
+No backend/migration changes — everything needed was already readable via existing RLS; this was purely a missing frontend entry point, exactly as the bug report predicted. `docs/development.md`'s long-open "Chats-tab entry: a conversations list" item (Sessions 4/5) is resolved by this session's `ConversationsListScreen.tsx` and is not carried forward below.
+
+### Next steps (suggested)
+- [ ] On-device verification pass (bundled with Sessions 12-14's still-open passes)
+- [ ] `MatchFoundScreen.tsx` — still unregistered/unreachable and still uses a hardcoded `matchId: 'new'` (Session 12); the `'Chat'` route it needs now exists, but the screen itself is unchanged
+- [ ] The deferred `-10` last-minute-cancel trust tier, the missing study-date "accept" flow, photo upload, and the incomplete-registration gap — all still open, unchanged from Session 14
+
+---
+
+## Session 16 — RLS performance pass (`postgres-patterns` skill audit)
+
+### What was done
+The `postgres-patterns` skill was invoked; rather than just restating its cheat sheet, ran its own anti-pattern diagnostic queries directly against the live local schema. Two real, verified findings: all 14 `public` RLS policies used bare `auth.uid()` instead of `(select auth.uid())` (Postgres's InitPlan optimization — evaluated once per query instead of once per row scanned; the initial detection query undercounted at first due to a three-valued-logic bug of its own — `with_check IS NULL` on SELECT-only policies collapsed `NOT (...)` to `NULL`, silently excluding rows — caught and fixed before reporting anything), and 2 FK columns (`messages.sender_id`, `study_dates.proposed_by`) had no index (Postgres never auto-indexes FK columns).
+
+**`rls_performance_and_fk_indexes.sql` (Migration 16)**: `ALTER POLICY` on all 14 policies wrapping every `auth.uid()` call, plus the 2 missing indexes. Purely a query-planner change — semantically identical to each policy's prior definition, doesn't touch the per-caller re-evaluation correctness already proven in Session 8.
+
+#### Verified
+- Reran both diagnostic queries post-migration: 0 unindexed FK columns, and (after loosening the match pattern to tolerate Postgres's actual deparse format — `( SELECT auth.uid() AS uid)`, not the literal `(select auth.uid())` text) 0 remaining unwrapped policies.
+- Reran an existing full-coverage REST script (`dashboard_profile_real_data_test.mjs`) — all assertions pass identically, confirming RLS behavior is unchanged.
+- `npx supabase db reset` — all 16 migrations replay clean.
+
+### Next steps (suggested)
+- Same as Session 15 — nothing new opened by this session.
+
+---
+
+## Session 17 — Close the `.edu` gate's post-signup update bypass
+
+### What was done
+Reported gap, confirmed by reading the trigger definition before any fix: `enforce_edu_email()` (Migration 2) was wired only to `BEFORE INSERT ON auth.users`, so a user could register with a real `.edu` address, then call `supabase.auth.updateUser({ email: 'anyone@gmail.com' })` with nothing stopping it — a permanent bypass of PRD §3's academic-only access requirement after initial signup.
+
+**`edu_email_gate_on_update.sql` (Migration 17)**: adds `edu_email_check_on_update`, `BEFORE UPDATE OF email ON auth.users FOR EACH ROW WHEN (NEW.email IS DISTINCT FROM OLD.email) EXECUTE FUNCTION public.enforce_edu_email()` — reuses the existing signup-gate function unchanged, no duplicated validation logic.
+
+#### Verified
+- **SQL-level**: an initial test running the `UPDATE` as role `authenticated` hit a grants wall (`42501`, `authenticated` has no base UPDATE privilege on `auth.users` at all) before ever reaching the trigger — correctly identified as testing the wrong thing (real clients never touch `auth.users` directly; GoTrue does, via an internal privileged role) and redone as `postgres`, which actually exercises the trigger: a non-`.edu` change is rejected with the same `23514`-class error the signup gate produces, a legitimate `.edu`-to-`.edu.tr` transfer still succeeds, and an unrelated `UPDATE` (not touching `email`) is untouched by the `WHEN` guard.
+- **REST-level, the real client path** (`supabase.auth.updateUser`), not just simulated SQL: a first attempt appeared to show the bypass working (`updateUser` returned no error) — investigated rather than accepted, and found to be a false negative: this project's `config.toml` has `double_confirm_changes = true`, so GoTrue queues a confirmation email instead of writing `auth.users.email` immediately (confirmed via `email_change`/`email_change_confirm_status` columns showing a pending, unapplied change). Pulled the real confirmation link out of the local Mailpit inbox (`MAILPIT_URL`, `/api/v1/messages`) and followed it end-to-end: GoTrue's actual confirm step is where the real `UPDATE` fires, and the trigger correctly rejects it there (`error_code=unexpected_failure` in the redirect, `auth.users.email` genuinely unchanged afterward). Repeated the same full signup → request-change → click-confirmation-link flow for a legitimate `.edu`-to-`.edu.tr` transfer — succeeds, `email` column updates correctly.
+- `npx supabase db reset` — all 17 migrations replay clean.
+- `npx tsc --noEmit` — **0 errors** (no frontend files touched, as expected for a backend-only gap).
+
+### Next steps (suggested)
+- Same as Session 15/16 — nothing new opened by this session.

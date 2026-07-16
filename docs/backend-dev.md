@@ -128,9 +128,11 @@ CREATE POLICY "users_can_read_own_match_messages"
 
 ## Auth Setup (Planned)
 
-### `.edu` Email Gate
+### `.edu` Email Gate — Implemented (Phase 1, hardened Session 17)
 
 Reject registration if email does not end in `.edu` or `.edu.tr`. Enforce at the database level via trigger or Supabase Auth hook (verify current mechanism with Supabase docs).
+
+**Session 17 hardening**: the original trigger (`enforce_edu_email()`) was wired only to `BEFORE INSERT ON auth.users`, so it gated signup but not a later `supabase.auth.updateUser({ email: 'anyone@gmail.com' })` — a permanent bypass once an account existed. `edu_email_gate_on_update.sql` adds a second trigger, `BEFORE UPDATE OF email ON auth.users WHEN (NEW.email IS DISTINCT FROM OLD.email)`, reusing the same function. Verified through the **full real GoTrue flow**, not just a simulated SQL update: this project's local config has `double_confirm_changes = true`, so `updateUser({email})` doesn't touch `auth.users.email` immediately — it queues a confirmation email (captured via the local Mailpit inbox at `MAILPIT_URL`) and only applies the change when that link is followed. Confirmed by extracting the real link from Mailpit and following it: a non-`.edu` target email fails at that point (GoTrue surfaces `error_code=unexpected_failure`, the trigger's rejection), while `auth.users.email` remains untouched throughout; a legitimate `.edu`-to-`.edu.tr` transfer through the identical flow succeeds and the column updates correctly.
 
 ```sql
 -- Example trigger (mechanism may differ in current Supabase version)
@@ -167,20 +169,24 @@ RLS applies to `postgres_changes` exactly as it does to a normal `SELECT` — no
 
 ---
 
-## Business Logic (Planned)
+## Business Logic
 
-### Trust Score Algorithm
+### Trust Score Algorithm — Implemented (Phase 5)
 
-Implemented as a `plpgsql` function (or Edge Function calling one). Increments/decrements based on post-date survey outcomes:
+Implemented as `submit_post_date_survey(study_date_id, met, environment, badge)` (`SECURITY DEFINER` plpgsql, `post_date_surveys.sql`) — **not** as a standalone `apply_trust_delta(user_id, delta)` RPC callable with a free-form delta/target, despite the illustrative example below still showing that shape. Exposing that literally would let any authenticated client forge anyone's trust_score (arbitrary signed delta + arbitrary target); the delta is instead computed from fixed constants inline in the survey function, and `target_id` is derived server-side (the other participant of the study date's match), never accepted as a parameter. See `docs/development.md` Session 14 for the full reasoning.
 
-- **+2**: Successful meeting (user confirms)
-- **−10**: Last-minute cancellation
-- **−25**: No-show / ghosting
+Only two of the three point values below are implemented — see the "not implemented" note under Match Timeout below the table for why:
 
-**Requirement**: Mutations are transactional (atomic `UPDATE ... SET trust_score = trust_score + delta WHERE id = ...` to prevent double-counts on retries).
+- **+2**: Successful meeting (survey `met=true`) — **implemented**
+- **−10**: Last-minute cancellation — **not implemented**. The survey's Q1 is a binary "did the meeting happen?" Yes/No, with no attribution anywhere in the schema for *who* cancelled or *when* relative to the scheduled time, and no "last-minute" threshold defined anywhere in the PRD. Building this needs a product decision first (a new column + a definition of "last-minute"), not a guess. Flagged as a deferred gap, not a bug.
+- **−25**: No-show / ghosting (survey `met=false`) — **implemented**
+
+**Requirement**: Mutations are transactional — satisfied via a single atomic `UPDATE ... SET trust_score = GREATEST(trust_score + delta, 0) WHERE id = target_id` inside `submit_post_date_survey`, guarded against retries/resubmission by `post_date_surveys`' `UNIQUE(study_date_id, reviewer_id)` constraint (a resubmission is a `23505`, not a silent double-apply).
+
+The function below is the **original illustrative example only** — kept here for history, not as the implemented shape. It is deliberately **not** what got built: exposing a public RPC with an arbitrary `user_id` + signed `delta` parameter would let any authenticated client set anyone's trust_score to anything. The real implementation computes the delta from fixed constants (+2/−25) inline and derives the target server-side; see `submit_post_date_survey` in `post_date_surveys.sql` and `docs/development.md` Session 14.
 
 ```sql
--- Example function
+-- Original illustrative example — NOT the implemented shape, see note above.
 CREATE OR REPLACE FUNCTION apply_trust_delta(
   user_id UUID,
   delta INTEGER
@@ -198,9 +204,9 @@ END;
 $$ LANGUAGE plpgsql;
 ```
 
-**Validation**: Reject malformed or duplicate survey submissions before any score mutation runs — fail closed, not open.
+**Validation**: Malformed/duplicate survey submissions are rejected before any score mutation runs (participant check, future-date check, then the `UNIQUE` constraint) — fail closed, not open. Verified via SQL and real REST calls, see `docs/development.md` Session 14.
 
-**Documentation**: Use named constants for point values and thresholds so a future PRD change is a one-line edit, not a grep-and-replace.
+**Documentation**: Point values are named constants (`+2`/`−25`) inline in `submit_post_date_survey`, not scattered magic numbers.
 
 ### Shadowban Filtering — Implemented (Phase 4)
 
@@ -212,39 +218,40 @@ Implemented as `discoverable_users_view.sql`, with one deviation from the litera
 
 **Hardened in `discoverable_users_hardening.sql` (Session 8)** after a bug-hunt audit found two gaps: the `active_match_id IS NULL` exclusion was only ever applied client-side (a query-string param any authenticated client could omit), and there was no persisted swipe/pass history so a refreshed Discovery deck would loop the same candidates forever. The view now enforces `active_match_id IS NULL` itself and adds `NOT EXISTS (... public.swipes ...)` keyed on `auth.uid()`, backed by a new `public.swipes` table (own-row RLS, `UNIQUE (swiper_id, target_id)`, no `UPDATE`/`DELETE` — a swipe decision is permanent). See `docs/development.md` Session 8, including the empirical two-caller test proving `auth.uid()` re-evaluates per querying session inside a non-`security_invoker` view rather than being fixed at view-creation time.
 
-### Match Timeout Cron Job
+### Match Timeout Cron Job — Implemented (Phase 5)
 
-Runs periodically (e.g., every 15 minutes) to:
-1. Find `matches` where `status = 'active'` and no `messages` exist with `created_at` in the last 12 hours
-2. Set `status = 'expired'`
-3. Nullify `active_match_id` on both `user1_id` and `user2_id`
+Runs every 15 minutes to find `matches` where `status = 'active'`, `updated_at < NOW() - 12h`, and no `messages` exist with `created_at` in the last 12 hours, then sets `status = 'expired'`.
 
-**Requirement**: The entire operation is **atomic** (single transaction) — no partial unlocks.
+**Requirement**: The entire operation is **atomic** — satisfied by a single `UPDATE` statement (Postgres's normal statement-level atomicity), no explicit transaction wrapper needed.
 
-Implemented as `pg_cron` job (if available on the Supabase plan) or a scheduled Edge Function:
+**Coordination** (this doc's original requirement, confirmed satisfied rather than assumed): the cron function does **not** separately null `active_match_id` — `sync_active_match_id()` (the Lock System's existing trigger, Migration 7) already does that generically for both participants on *any* `matches.status` transition away from `'active'`, confirmed by reading its source before writing this. Duplicating that logic in the cron function would be the exact kind of bypass this requirement warns against; going through the same trigger is what satisfies it.
+
+Implemented in `match_timeout_cron.sql`:
 
 ```sql
--- Example: using pg_cron (verify availability)
-SELECT cron.schedule('match-timeout-sweep', '*/15 * * * *', $$
-  UPDATE matches
-  SET status = 'expired'
-  WHERE status = 'active'
-  AND updated_at < NOW() - INTERVAL '12 hours'
-  AND NOT EXISTS (
-    SELECT 1 FROM messages
-    WHERE messages.match_id = matches.id
-    AND messages.created_at > NOW() - INTERVAL '12 hours'
-  );
+CREATE EXTENSION IF NOT EXISTS pg_cron;
 
-  UPDATE users
-  SET active_match_id = NULL
-  WHERE active_match_id IN (
-    SELECT id FROM matches WHERE status = 'expired'
-  );
-$$);
+CREATE OR REPLACE FUNCTION public.expire_stale_matches()
+RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
+  UPDATE public.matches
+     SET status = 'expired'
+   WHERE status = 'active'
+     AND updated_at < NOW() - INTERVAL '12 hours'
+     AND NOT EXISTS (
+       SELECT 1 FROM public.messages
+        WHERE messages.match_id = matches.id
+          AND messages.created_at > NOW() - INTERVAL '12 hours'
+     );
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.expire_stale_matches() FROM PUBLIC;
+
+SELECT cron.schedule('match-timeout-sweep', '*/15 * * * *', 'SELECT public.expire_stale_matches();');
 ```
 
-**Coordination**: If the Lock System's single-active-match constraint is enforced by a DB trigger, this cron job must go through the same code path/trigger rather than writing to `active_match_id` directly and bypassing the invariant.
+`pg_cron` availability was verified empirically against this stack's local Docker Postgres image (already in `shared_preload_libraries`) rather than assumed — see `docs/development.md` Session 14. `expire_stale_matches()` has `EXECUTE` explicitly revoked from `PUBLIC` (Postgres grants it by default on new functions) since it sweeps *all* stale matches with no per-caller scoping and must never be directly callable by `authenticated`/`anon` — verified via `has_function_privilege` and a real REST call attempt.
+
+Known nuance, documented rather than "fixed": `matches.updated_at` is currently only ever set at row-creation — nothing bumps it on later activity (e.g. a reveal-flag toggle). This doesn't produce an incorrect sweep result today because the `NOT EXISTS (recent message)` clause is what actually protects an active conversation from expiring, independent of whether `updated_at` itself is fresh — verified directly (a match with a stale `updated_at` but a recent message does not expire).
 
 ### Lock System Enforcement — Implemented (Phase 3)
 
@@ -309,19 +316,20 @@ export default async (req: Request) => {
 - [x] Supabase project created and database configured — local CLI stack (`StudyMatch/supabase/`), hosted project linking deferred to Phase 6
 - [x] `public.users` table created with RLS enabled — Phase 1
 - [x] `matches`/`messages`/`study_dates` tables created with RLS + grants — Phase 2 (`create_matches_messages_study_dates.sql`, `matches_messages_study_dates_rls.sql`); `users.active_match_id` FK closed; verified at SQL and REST level (see development.md Session 4)
-- [x] `.edu` auth gate trigger deployed and tested — `edu_email_gate.sql`, verified against GoTrue v2.192.0
+- [x] `.edu` auth gate trigger deployed and tested — `edu_email_gate.sql`, verified against GoTrue v2.192.0; gated signup only until `edu_email_gate_on_update.sql` (Session 17) closed the post-signup `updateUser({email})` bypass — see development.md Session 17
 - [x] Lock System single-active-match trigger on `matches` — Phase 3 (`lock_system_enforcement.sql`); verified at SQL and REST level, see development.md Session 5
 - [x] Lock System hardened against direct client writes (`active_match_id`/`trust_score`) and a concurrent-match TOCTOU race — `lock_system_hardening.sql`; verified via SQL, a real two-session concurrency test, and REST, see development.md Session 6
 - [x] Realtime publication configured on `matches` (and `messages`) tables — Phase 4 (`realtime_publication.sql`); verified via `pg_publication_tables` and a real websocket client test proving RLS gates delivery, see development.md Session 7
-- [ ] Trust-score function tested (apply delta without double-counts) — Phase 5
+- [x] Trust-score function tested (apply delta without double-counts) — Phase 5 (`post_date_surveys.sql`): `submit_post_date_survey` RPC, not a standalone client-facing `apply_trust_delta`; only the +2/−25 tiers (the −10 last-minute-cancel tier is a flagged, deferred gap — see backend-dev.md's Trust Score Algorithm section); verified via SQL and real REST calls that a resubmission can't double-count, see development.md Session 14
 - [x] Shadowban view created and accessible — Phase 4 (`discoverable_users_view.sql`); excludes `email`/`verification_code` (deviation from the doc's literal `SELECT *`, flagged in the migration and dev log); wired into `DiscoveryScreen.tsx`, see development.md Session 7
 - [x] `discoverable_users` hardened: lock-status exclusion moved server-side (was client-filter-only), plus a `public.swipes` table so passed/matched candidates never reappear — `discoverable_users_hardening.sql`, see development.md Session 8
 - [x] Real double opt-in match formation (PRD §4) — `mutual_match_formation.sql`: a `swipes`-table trigger forms the match only on a mutual right-swipe, with `authenticated`'s direct INSERT on `matches` revoked entirely (closes a bug where a single one-sided swipe instantly matched both users); see development.md Session 10
 - [x] `users_select_swiped_right` RLS policy — `users_select_swiped_right.sql`: a user may read the profile of anyone they've swiped right on (outbound only, no "who liked me" leak), needed for Dashboard's Recently Liked section; see development.md Session 11
-- [ ] Match-timeout cron job deployed and tested — Phase 5
+- [x] Match-timeout cron job deployed and tested — Phase 5 (`match_timeout_cron.sql`): `pg_cron` sweep every 15 min, reuses the existing Lock System trigger for the unlock rather than duplicating it; verified via direct invocation (stale match expires, active-conversation match doesn't), see development.md Session 14
 - [ ] Edge Functions deployed and tested in isolation — not yet started
-- [x] Data mapping layer in place (`src/data/mappers.ts`: users, matches, messages, study_dates) — Chat, Study Date Planner, Dashboard, and My Profile wired; `EditProfileScreen.tsx` remains mock (see development.md Session 11)
+- [x] Data mapping layer in place (`src/data/mappers.ts`: users, matches, messages, study_dates) — Chat, Study Date Planner, Dashboard, My Profile, and Edit Profile all wired; every screen now reads/writes real data except photo upload (no Storage bucket yet), see development.md Session 13
 - [ ] Real email verification (Supabase Auth OTP/magic-link) — Phase 1 currently uses a mock `verification_code` column (`'000000'`) as a placeholder, see `implemention.md`
+- [x] RLS performance pass — `rls_performance_and_fk_indexes.sql`: all 14 `public` RLS policies now wrap `auth.uid()` in `(select auth.uid())` (Postgres's InitPlan optimization — evaluated once per query, not once per row; purely a planner change, doesn't affect the per-caller correctness already verified in Session 8), plus 2 previously-unindexed FK columns (`messages.sender_id`, `study_dates.proposed_by`) got indexes; see development.md Session 16
 
 ---
 
