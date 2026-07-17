@@ -4,7 +4,15 @@
 // module knows about snake_case column names. Every later phase's wiring reuses these.
 // See docs/integration.md.
 
-import type { User, Match, Message, StudyDate, RegistrationData } from '../types';
+import type {
+  User,
+  DiscoveryCandidate,
+  EmailVerificationStatus,
+  Match,
+  Message,
+  StudyDate,
+  RegistrationData,
+} from '../types';
 
 /** Map a `public.users` row (snake_case) to the frontend `User` type (camelCase). */
 export function mapUserFromAPI(row: any): User {
@@ -27,7 +35,40 @@ export function mapUserFromAPI(row: any): User {
     bio: row.bio ?? undefined,
     availability: row.availability ?? undefined,
     city: row.city ?? undefined,
+    birthdate: row.birthdate ?? undefined,
     activeMatchId: row.active_match_id ?? null,
+  };
+}
+
+/**
+ * Map `public.users`' email-verification columns (snake_case) to the frontend
+ * `EmailVerificationStatus` type (camelCase). Takes the same kind of raw row
+ * `mapUserFromAPI` does, but only reads the two verification-status columns —
+ * callers select just what they need (`email_verified`, `verification_code`,
+ * or both), same as `mapUserFromAPI` tolerates a partial `select()`.
+ */
+export function mapEmailVerificationStatusFromAPI(
+  row: any,
+): EmailVerificationStatus {
+  return {
+    emailVerified: row?.email_verified ?? false,
+    verificationCode: row?.verification_code ?? '',
+  };
+}
+
+/**
+ * Map a `discoverable_users` row (snake_case) to the frontend `DiscoveryCandidate`
+ * type (camelCase) — Phase 7. Adds the view's viewer-relative columns on top of the
+ * same base fields `mapUserFromAPI` already maps; `age`/`same_city` are NULL-safe by
+ * construction on the view (see `recommendation_scoring.sql`), `match_score` always a
+ * concrete 0-100 integer.
+ */
+export function mapDiscoveryCandidateFromAPI(row: any): DiscoveryCandidate {
+  return {
+    ...mapUserFromAPI(row),
+    age: row.age ?? undefined,
+    sameCity: row.same_city ?? undefined,
+    matchScore: row.match_score ?? 0,
   };
 }
 
@@ -100,10 +141,21 @@ export function registrationToProfileUpdate(
 
 /**
  * Inverse of registrationToProfileUpdate: rebuilds a partial RegistrationData
- * from a `public.users` row so a user resuming an incomplete registration
- * (signed up at Step 1, quit before Step 4's UPDATE ever ran) doesn't have to
- * retype whatever they'd already entered. `email` isn't a registration field
- * collected via this row — it comes from the auth session instead.
+ * from a `public.users` row, passed forward as route.params.data when
+ * AppNavigator.tsx routes a session with an incomplete profile back into the
+ * registration flow. `email` comes from the auth session, not this row.
+ *
+ * IMPORTANT — this does NOT currently restore a user's previously-typed
+ * values: registrationToProfileUpdate only ever runs once, inside Step 4's
+ * "Complete Archive" handler. Steps 2-3 never write to public.users, only
+ * pass data forward via navigation params — so if this function is reached
+ * at all (AppNavigator's `!row?.name` gate), name/university/department/
+ * current_tags/current_goal_text are guaranteed NULL by construction; only
+ * `email` will ever actually populate. "Resume" today means "don't land in
+ * MainTabs with a blank profile," not "get your typed data back." If
+ * registration is ever changed to persist incrementally per step, this
+ * function will start actually restoring data without needing to change —
+ * but until then, don't read this as doing more than it does.
  */
 export function profileRowToRegistrationData(
   row: any,

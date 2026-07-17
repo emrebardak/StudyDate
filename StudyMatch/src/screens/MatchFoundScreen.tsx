@@ -64,7 +64,7 @@ export default function MatchFoundScreen({ navigation }: Props) {
         matchRow.user1_id === userId ? matchRow.user2_id : matchRow.user1_id;
 
       const { data: partnerRow } = await supabase
-        .from('users')
+        .from('matched_users')
         .select('name')
         .eq('id', partnerId)
         .single();

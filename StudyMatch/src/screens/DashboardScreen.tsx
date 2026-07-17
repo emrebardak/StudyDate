@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -56,7 +57,13 @@ function formatSessionTime(iso: string): string {
 }
 
 // ── Session Row ───────────────────────────────────────────────────────────────
-function SessionRow({ session }: { session: UpcomingSession }) {
+function SessionRow({
+  session,
+  onCancel,
+}: {
+  session: UpcomingSession;
+  onCancel: () => void;
+}) {
   return (
     <View style={styles.sessionRow}>
       {/* Date badge */}
@@ -90,6 +97,20 @@ function SessionRow({ session }: { session: UpcomingSession }) {
       <View style={styles.partnerAvatar}>
         <Text style={styles.partnerInitial}>{session.partnerInitial}</Text>
       </View>
+
+      {/* Cancel */}
+      <TouchableOpacity
+        style={styles.cancelSessionBtn}
+        activeOpacity={0.7}
+        onPress={onCancel}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
+        <Ionicons
+          name="close-circle-outline"
+          size={20}
+          color={Colors.textMuted}
+        />
+      </TouchableOpacity>
     </View>
   );
 }
@@ -175,7 +196,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
         let partnerName = '';
         if (partnerId) {
           const { data: partnerRow } = await supabase
-            .from('users')
+            .from('matched_users')
             .select('name')
             .eq('id', partnerId)
             .single();
@@ -220,7 +241,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
       if (likedRows?.length) {
         const targetIds = likedRows.map(r => r.target_id);
         const { data: likedUsers } = await supabase
-          .from('users')
+          .from('swiped_right_users')
           .select('id, name, department, university')
           .in('id', targetIds);
         const byId = new Map((likedUsers ?? []).map(u => [u.id, u]));
@@ -271,8 +292,48 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
     }, [loadDashboard]),
   );
 
+  // Mirrors ChatScreen.tsx's handleEndMatch confirmation pattern. cancel_study_date
+  // is server-authoritative on everything: cancelled_by is always auth.uid(),
+  // never client-supplied, and the -10 trust-score penalty only actually applies
+  // if the RPC finds this within 2h of scheduled_time AND the match is still
+  // active — the frontend doesn't need to compute or gate on that threshold.
+  function handleCancelSession(studyDateId: string) {
+    Alert.alert(
+      'Cancel this study date?',
+      'Cancelling within 2 hours of the scheduled time may affect your trust score.',
+      [
+        { text: 'Keep It', style: 'cancel' },
+        {
+          text: 'Cancel Date',
+          style: 'destructive',
+          onPress: async () => {
+            const { error: rpcError } = await supabase.rpc(
+              'cancel_study_date',
+              {
+                p_study_date_id: studyDateId,
+              },
+            );
+            if (rpcError) {
+              Alert.alert(
+                'Could not cancel',
+                toFriendlyErrorMessage(rpcError, {
+                  codeMessages: {
+                    ST007: "You're not a participant in this study date.",
+                    ST008: 'This date was already cancelled or completed.',
+                    ST009: 'This date has already happened — rate it instead.',
+                  },
+                }),
+              );
+              return;
+            }
+            loadDashboard();
+          },
+        },
+      ],
+    );
+  }
+
   const firstName = user?.name?.trim().split(/\s+/)[0] || 'Scholar';
-  const avatarInitial = user?.name ? user.name[0].toUpperCase() : '?';
 
   if (loading && !user) {
     return (
@@ -312,9 +373,6 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
           <Ionicons name="school" size={22} color={Colors.primary} />
           <Text style={styles.headerTitle}>StudyMatch</Text>
         </View>
-        <TouchableOpacity style={styles.avatarCircle} activeOpacity={0.8}>
-          <Text style={styles.avatarInitial}>{avatarInitial}</Text>
-        </TouchableOpacity>
       </View>
 
       {/* ── Scrollable Content ── */}
@@ -348,7 +406,10 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
             upcomingSessions.map((s, idx) => (
               <React.Fragment key={s.id}>
                 {idx > 0 && <View style={styles.sessionGap} />}
-                <SessionRow session={s} />
+                <SessionRow
+                  session={s}
+                  onCancel={() => handleCancelSession(s.id)}
+                />
               </React.Fragment>
             ))
           )}
@@ -441,22 +502,6 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     letterSpacing: 0.5,
   },
-  avatarCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.surfaceHigh,
-    borderWidth: 2,
-    borderColor: Colors.borderGold,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitial: {
-    fontSize: Typography.size.sm,
-    fontWeight: Typography.weight.bold,
-    color: Colors.primary,
-  },
-
   // ── Scroll ──────────────────────────────────────────────────────────────────
   scroll: { flex: 1 },
   scrollContent: {
@@ -606,6 +651,12 @@ const styles = StyleSheet.create({
     fontSize: Typography.size.xs,
     fontWeight: Typography.weight.bold,
     color: Colors.primary,
+  },
+
+  // Cancel session
+  cancelSessionBtn: {
+    flexShrink: 0,
+    marginLeft: Spacing.xs,
   },
 
   // View schedule

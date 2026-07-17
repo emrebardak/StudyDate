@@ -24,7 +24,11 @@ function looksLikeEmail(email: string): boolean {
 // the client-side check never contradicts what Auth would accept.
 const MIN_PASSWORD_LENGTH = 6;
 
-export default function RegisterVerificationScreen({ navigation }: { navigation: any }) {
+export default function RegisterVerificationScreen({
+  navigation,
+}: {
+  navigation: any;
+}) {
   const [mode, setMode] = useState<'signup' | 'login'>('signup');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -33,7 +37,7 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
   const [loading, setLoading] = useState(false);
 
   function toggleMode() {
-    setMode((m) => (m === 'signup' ? 'login' : 'signup'));
+    setMode(m => (m === 'signup' ? 'login' : 'signup'));
     setError('');
   }
 
@@ -51,13 +55,37 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
     setLoading(true);
     try {
       if (mode === 'login') {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email: trimmed,
-          password,
-        });
+        const { data: signInData, error: signInError } =
+          await supabase.auth.signInWithPassword({
+            email: trimmed,
+            password,
+          });
         if (signInError) {
           setError(signInError.message);
           return;
+        }
+        const userId = signInData.user?.id;
+        if (userId) {
+          // Mirrors AppNavigator.tsx's cold-start session check: Supabase Auth's own email
+          // confirmation is disabled locally (enable_confirmations = false), so
+          // email_verified is the app's only verification gate. Without this, switching to
+          // "Log In" let an unverified account skip straight to MainTabs.
+          const { data: row, error: rowError } = await supabase
+            .from('users')
+            .select('email_verified')
+            .eq('id', userId)
+            .single();
+          // Fail open on a transient fetch error, matching AppNavigator.tsx's identical
+          // precedent — don't block a legitimate sign-in over a network hiccup.
+          if (!rowError && !row?.email_verified) {
+            // No row data to map here (just gating on a boolean) — email is already known
+            // locally, so this is the same literal { email } shape the signup path passes,
+            // not a case profileRowToRegistrationData's row-mapping actually fits.
+            navigation.navigate('RegisterEmailCode', {
+              data: { email: trimmed },
+            });
+            return;
+          }
         }
         navigation.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
         return;
@@ -75,7 +103,7 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
         setError(signUpError.message);
         return;
       }
-      navigation.navigate('RegisterProfile', { data: { email: trimmed } });
+      navigation.navigate('RegisterEmailCode', { data: { email: trimmed } });
     } catch (e: any) {
       setError(e?.message ?? 'Something went wrong. Please try again.');
     } finally {
@@ -85,7 +113,6 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
 
   return (
     <View style={styles.root}>
-
       {/* Top progress sliver */}
       <View style={styles.topBarTrack}>
         <View style={styles.topBarFill} />
@@ -107,9 +134,10 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <View style={styles.content}>
-
           {/* Hero */}
-          <Text style={styles.stepTitle}>{mode === 'signup' ? 'Step 1' : 'Welcome Back'}</Text>
+          <Text style={styles.stepTitle}>
+            {mode === 'signup' ? 'Step 1' : 'Welcome Back'}
+          </Text>
           <Text style={styles.stepSubtitle}>
             {mode === 'signup' ? 'Academic Verification' : 'Sign In'}
           </Text>
@@ -126,13 +154,17 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
             </Text>
 
             <View style={[styles.inputRow, !!error && styles.inputRowError]}>
-              <Ionicons name="mail-outline" size={18} color={Colors.textSecondary} />
+              <Ionicons
+                name="mail-outline"
+                size={18}
+                color={Colors.textSecondary}
+              />
               <TextInput
                 style={styles.input}
                 placeholder="student@university.edu"
                 placeholderTextColor={Colors.textMuted}
                 value={email}
-                onChangeText={(v) => {
+                onChangeText={v => {
                   setEmail(v);
                   if (error) setError('');
                 }}
@@ -147,13 +179,17 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
             </Text>
 
             <View style={[styles.inputRow, !!error && styles.inputRowError]}>
-              <Ionicons name="lock-closed-outline" size={18} color={Colors.textSecondary} />
+              <Ionicons
+                name="lock-closed-outline"
+                size={18}
+                color={Colors.textSecondary}
+              />
               <TextInput
                 style={styles.input}
                 placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
                 placeholderTextColor={Colors.textMuted}
                 value={password}
-                onChangeText={(v) => {
+                onChangeText={v => {
                   setPassword(v);
                   if (error) setError('');
                 }}
@@ -162,7 +198,7 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
                 autoCorrect={false}
               />
               <TouchableOpacity
-                onPress={() => setShowPassword((s) => !s)}
+                onPress={() => setShowPassword(s => !s)}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
                 <Ionicons
@@ -178,13 +214,17 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
             ) : (
               mode === 'signup' && (
                 <Text style={styles.helperText}>
-                  Your password is stored securely. You'll use it to sign back in.
+                  Your password is stored securely. You'll use it to sign back
+                  in.
                 </Text>
               )
             )}
 
             <TouchableOpacity
-              style={[styles.continueBtn, loading && styles.continueBtnDisabled]}
+              style={[
+                styles.continueBtn,
+                loading && styles.continueBtnDisabled,
+              ]}
               activeOpacity={0.85}
               onPress={handleContinue}
               disabled={loading}
@@ -196,7 +236,11 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
                   <Text style={styles.continueBtnText}>
                     {mode === 'signup' ? 'Continue' : 'Log In'}
                   </Text>
-                  <Ionicons name="arrow-forward" size={20} color={Colors.textOnYellow} />
+                  <Ionicons
+                    name="arrow-forward"
+                    size={20}
+                    color={Colors.textOnYellow}
+                  />
                 </>
               )}
             </TouchableOpacity>
@@ -207,7 +251,9 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
               onPress={toggleMode}
             >
               <Text style={styles.toggleModeText}>
-                {mode === 'signup' ? 'Already have an account? ' : 'New to StudyMatch? '}
+                {mode === 'signup'
+                  ? 'Already have an account? '
+                  : 'New to StudyMatch? '}
                 <Text style={styles.toggleModeLink}>
                   {mode === 'signup' ? 'Log In' : 'Create Account'}
                 </Text>
@@ -218,10 +264,10 @@ export default function RegisterVerificationScreen({ navigation }: { navigation:
           {/* Support footer */}
           <TouchableOpacity activeOpacity={0.7}>
             <Text style={styles.supportText}>
-              Having trouble? <Text style={styles.supportLink}>Contact Support</Text>
+              Having trouble?{' '}
+              <Text style={styles.supportLink}>Contact Support</Text>
             </Text>
           </TouchableOpacity>
-
         </View>
       </KeyboardAvoidingView>
     </View>

@@ -72,7 +72,7 @@ If a future phase does need an Edge Function, prefer a **Database Webhook** (dec
 - Re-verify the `.edu` gate mechanism against the hosted project's actual Auth version, since hosted may differ from the local Docker image.
 - **Frontend wiring**: swap the Supabase client singleton's local URL/anon key for the hosted project's values (e.g. via env config) — no other frontend code changes, since all prior phases already wired against the same `supabase-js` client interface.
 
-### Phase 7 — Recommendation & filter-based matching for Discovery (planned, not started)
+### Phase 7 — Recommendation & filter-based matching for Discovery (implemented — schema half Session 26, frontend half Session 30)
 
 #### Context
 Discovery currently shows `discoverable_users` candidates in whatever order the view returns — no ranking, no filtering. Two things have sat unfinished:

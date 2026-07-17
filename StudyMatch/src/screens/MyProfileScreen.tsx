@@ -174,15 +174,7 @@ export default function MyProfileScreen({ navigation }: { navigation: any }) {
     <View style={styles.root}>
       {/* ── Header ── */}
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.headerBack}
-          onPress={() => navigation?.goBack?.()}
-        >
-          <Ionicons name="arrow-back" size={22} color={Colors.textPrimary} />
-        </TouchableOpacity>
         <Text style={styles.headerTitle}>My Profile</Text>
-        {/* spacer to balance the back button and keep title truly centered */}
-        <View style={styles.headerSpacer} />
       </View>
 
       <ScrollView
@@ -358,19 +350,12 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.md,
     backgroundColor: Colors.background,
   },
-  headerBack: {
-    padding: Spacing.xs,
-  },
   headerTitle: {
     flex: 1,
     textAlign: 'center',
     fontSize: Typography.size.lg,
     fontWeight: Typography.weight.bold,
     color: Colors.textPrimary,
-  },
-  // Mirrors the back button width so the title stays truly centered
-  headerSpacer: {
-    width: 30,
   },
 
   scroll: { flex: 1 },

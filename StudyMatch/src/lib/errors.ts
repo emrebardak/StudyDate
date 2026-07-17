@@ -16,6 +16,10 @@ export interface FriendlyErrorOptions {
    * wording per call site — "already submitted this survey" and "already sent
    * this request" aren't the same message. */
   duplicateMessage?: string;
+  /** Per-call-site overrides for app-specific custom error codes (e.g. this
+   * project's ST0xx codes from RPC functions like cancel_study_date).
+   * Checked after the built-in 23505/42501 cases, before the fallback. */
+  codeMessages?: Record<string, string>;
   /** Shown for anything that isn't a known case. Defaults to a generic string. */
   fallbackMessage?: string;
 }
@@ -37,6 +41,9 @@ export function toFriendlyErrorMessage(
   }
   if (err.code === '42501') {
     return PERMISSION_DENIED_MESSAGE;
+  }
+  if (err.code && options.codeMessages?.[err.code]) {
+    return options.codeMessages[err.code];
   }
   if (!err.code && error instanceof TypeError) {
     return NETWORK_MESSAGE;

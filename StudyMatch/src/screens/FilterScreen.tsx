@@ -7,6 +7,7 @@ import {
   ScrollView,
   StyleSheet,
   Pressable,
+  Switch,
   LayoutChangeEvent,
   GestureResponderEvent,
 } from 'react-native';
@@ -14,13 +15,17 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography } from '../theme';
 import type { DiscoveryFilters } from '../types';
 
+// An untouched Apply must be a true no-op — full age range and no department
+// selection, not an arbitrary-looking restriction the user never chose. (The
+// RangeSlider's own min/max, 18/50, double as "unset" — DiscoveryScreen only
+// applies an age bound when it's inside that range.)
 const DEFAULT_FILTERS: DiscoveryFilters = {
   institution: '',
   selectedUni: '',
-  distance: 25,
-  minAge: 21,
-  maxAge: 28,
-  departments: ['Computer Science', 'Engineering'],
+  sameCityOnly: false,
+  minAge: 18,
+  maxAge: 50,
+  departments: [],
 };
 
 const QUICK_UNIS = ['Harvard Univ.', 'MIT', 'Stanford'];
@@ -37,40 +42,6 @@ const ALL_DEPARTMENTS = [
 
 function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v));
-}
-
-interface SliderProps {
-  value: number;
-  min: number;
-  max: number;
-  onChange: (v: number) => void;
-}
-
-function Slider({ value, min, max, onChange }: SliderProps) {
-  const [trackWidth, setTrackWidth] = useState(0);
-
-  function handlePress(e: GestureResponderEvent) {
-    if (!trackWidth) return;
-    const x = e.nativeEvent.locationX;
-    const ratio = clamp(x / trackWidth, 0, 1);
-    onChange(Math.round(min + ratio * (max - min)));
-  }
-
-  const pct = clamp((value - min) / (max - min), 0.001, 0.999);
-
-  return (
-    <Pressable
-      style={s.trackWrap}
-      onPress={handlePress}
-      onLayout={(e: LayoutChangeEvent) => setTrackWidth(e.nativeEvent.layout.width)}
-    >
-      <View style={s.trackRow}>
-        <View style={[s.trackFill, { flex: pct }]} />
-        <View style={s.distThumb} />
-        <View style={[s.trackEmpty, { flex: 1 - pct }]} />
-      </View>
-    </Pressable>
-  );
 }
 
 interface RangeSliderProps {
@@ -114,7 +85,9 @@ function RangeSlider({
     <Pressable
       style={s.trackWrap}
       onPress={handlePress}
-      onLayout={(e: LayoutChangeEvent) => setTrackWidth(e.nativeEvent.layout.width)}
+      onLayout={(e: LayoutChangeEvent) =>
+        setTrackWidth(e.nativeEvent.layout.width)
+      }
     >
       <View style={s.trackRow}>
         <View style={[s.trackEmpty, { flex: minPct }]} />
@@ -150,26 +123,32 @@ function DeptChip({ label, selected, onPress }: DeptChipProps) {
   );
 }
 
-export default function FilterScreen({ navigation, route }: { navigation: any; route: any }) {
+export default function FilterScreen({
+  navigation,
+  route,
+}: {
+  navigation: any;
+  route: any;
+}) {
   const initial: DiscoveryFilters = route?.params?.current ?? DEFAULT_FILTERS;
 
   const [institution, setInstitution] = useState(initial.institution);
   const [selectedUni, setSelectedUni] = useState(initial.selectedUni);
-  const [distance, setDistance] = useState(initial.distance);
+  const [sameCityOnly, setSameCityOnly] = useState(initial.sameCityOnly);
   const [minAge, setMinAge] = useState(initial.minAge);
   const [maxAge, setMaxAge] = useState(initial.maxAge);
   const [departments, setDepartments] = useState<string[]>(initial.departments);
 
   function toggleDept(dept: string) {
-    setDepartments((prev) =>
-      prev.includes(dept) ? prev.filter((d) => d !== dept) : [...prev, dept],
+    setDepartments(prev =>
+      prev.includes(dept) ? prev.filter(d => d !== dept) : [...prev, dept],
     );
   }
 
   function resetFilters() {
     setInstitution(DEFAULT_FILTERS.institution);
     setSelectedUni(DEFAULT_FILTERS.selectedUni);
-    setDistance(DEFAULT_FILTERS.distance);
+    setSameCityOnly(DEFAULT_FILTERS.sameCityOnly);
     setMinAge(DEFAULT_FILTERS.minAge);
     setMaxAge(DEFAULT_FILTERS.maxAge);
     setDepartments(DEFAULT_FILTERS.departments);
@@ -179,7 +158,7 @@ export default function FilterScreen({ navigation, route }: { navigation: any; r
     const filters: DiscoveryFilters = {
       institution,
       selectedUni,
-      distance,
+      sameCityOnly,
       minAge,
       maxAge,
       departments,
@@ -226,7 +205,7 @@ export default function FilterScreen({ navigation, route }: { navigation: any; r
           </View>
 
           <View style={s.pillRow}>
-            {QUICK_UNIS.map((uni) => {
+            {QUICK_UNIS.map(uni => {
               const active = selectedUni === uni;
               return (
                 <TouchableOpacity
@@ -235,7 +214,9 @@ export default function FilterScreen({ navigation, route }: { navigation: any; r
                   onPress={() => setSelectedUni(active ? '' : uni)}
                   activeOpacity={0.75}
                 >
-                  <Text style={[s.pillText, active && s.pillTextSel]}>{uni}</Text>
+                  <Text style={[s.pillText, active && s.pillTextSel]}>
+                    {uni}
+                  </Text>
                 </TouchableOpacity>
               );
             })}
@@ -244,21 +225,18 @@ export default function FilterScreen({ navigation, route }: { navigation: any; r
 
         <View style={s.card}>
           <View style={s.cardRow}>
-            <Text style={s.cardTitle}>Max Distance</Text>
-            <View style={s.badge}>
-              <Text style={s.badgeText}>{distance} Miles</Text>
+            <View style={s.sameCityLabelWrap}>
+              <Text style={s.cardTitle}>Same City Only</Text>
+              <Text style={s.sameCitySubtitle}>
+                Only show students in your city
+              </Text>
             </View>
-          </View>
-
-          <Slider
-            value={distance}
-            min={1}
-            max={100}
-            onChange={setDistance}
-          />
-          <View style={s.trackEdges}>
-            <Text style={s.trackEdgeLabel}>1 mi</Text>
-            <Text style={s.trackEdgeLabel}>100+ mi</Text>
+            <Switch
+              value={sameCityOnly}
+              onValueChange={setSameCityOnly}
+              trackColor={{ false: Colors.surfaceMid, true: Colors.primary }}
+              thumbColor={Colors.textPrimary}
+            />
           </View>
         </View>
 
@@ -289,7 +267,7 @@ export default function FilterScreen({ navigation, route }: { navigation: any; r
         <View style={s.card}>
           <Text style={s.cardTitle}>Department Focus</Text>
           <View style={s.deptGrid}>
-            {ALL_DEPARTMENTS.map((dept) => (
+            {ALL_DEPARTMENTS.map(dept => (
               <DeptChip
                 key={dept}
                 label={dept}
@@ -310,7 +288,11 @@ export default function FilterScreen({ navigation, route }: { navigation: any; r
           onPress={applyFilters}
         >
           <Text style={s.applyBtnText}>Apply Filters</Text>
-          <Ionicons name="options-outline" size={18} color={Colors.textOnYellow} />
+          <Ionicons
+            name="options-outline"
+            size={18}
+            color={Colors.textOnYellow}
+          />
         </TouchableOpacity>
       </View>
     </View>
@@ -372,6 +354,14 @@ const s = StyleSheet.create({
     fontSize: Typography.size.base,
     fontWeight: Typography.weight.semibold,
     color: Colors.textPrimary,
+  },
+  sameCityLabelWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  sameCitySubtitle: {
+    fontSize: Typography.size.sm,
+    color: Colors.textSecondary,
   },
   badge: {
     backgroundColor: Colors.surface,
@@ -451,19 +441,6 @@ const s = StyleSheet.create({
     height: 4,
     backgroundColor: Colors.surfaceMid,
     borderRadius: 4,
-  },
-  distThumb: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: Colors.primary,
-    ...{
-      shadowColor: Colors.primary,
-      shadowOffset: { width: 0, height: 0 },
-      shadowOpacity: 0.4,
-      shadowRadius: 10,
-      elevation: 4,
-    },
   },
   ageThumb: {
     width: 20,

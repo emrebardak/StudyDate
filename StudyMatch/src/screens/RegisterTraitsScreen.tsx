@@ -10,25 +10,31 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography } from '../theme';
 
 const TRAITS = [
-  { key: 'Night Owl',     icon: 'moon-outline' },
+  { key: 'Night Owl', icon: 'moon-outline' },
   { key: 'Coffee Fueled', icon: 'cafe-outline' },
-  { key: 'Early Bird',    icon: 'sunny-outline' },
+  { key: 'Early Bird', icon: 'sunny-outline' },
   { key: 'Library Lover', icon: 'book-outline' },
-  { key: 'Group Study',   icon: 'people-outline' },
-  { key: 'Solo Focus',    icon: 'headset-outline' },
-  { key: 'Pomodoro',      icon: 'timer-outline' },
+  { key: 'Group Study', icon: 'people-outline' },
+  { key: 'Solo Focus', icon: 'headset-outline' },
+  { key: 'Pomodoro', icon: 'timer-outline' },
   { key: 'Vocal Learner', icon: 'megaphone-outline' },
 ] as const;
 
-export default function RegisterTraitsScreen({ navigation, route }: { navigation: any; route: any }) {
+export default function RegisterTraitsScreen({
+  navigation,
+  route,
+}: {
+  navigation: any;
+  route: any;
+}) {
   const incoming = route?.params?.data ?? {};
-  const [selected, setSelected] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string[]>(incoming.traits ?? []);
 
   const canContinue = selected.length > 0;
 
   function toggleTrait(trait: string) {
-    setSelected((prev) =>
-      prev.includes(trait) ? prev.filter((t) => t !== trait) : [...prev, trait],
+    setSelected(prev =>
+      prev.includes(trait) ? prev.filter(t => t !== trait) : [...prev, trait],
     );
   }
 
@@ -47,7 +53,6 @@ export default function RegisterTraitsScreen({ navigation, route }: { navigation
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.card}>
-
           {/* Step header + progress */}
           <View style={styles.stepHeader}>
             <Text style={styles.stepLabel}>STEP 3 OF 4</Text>
@@ -66,7 +71,7 @@ export default function RegisterTraitsScreen({ navigation, route }: { navigation
 
           {/* ── Trait grid ── */}
           <View style={styles.grid}>
-            {TRAITS.map((trait) => {
+            {TRAITS.map(trait => {
               const isSelected = selected.includes(trait.key);
               return (
                 <TouchableOpacity
@@ -81,7 +86,10 @@ export default function RegisterTraitsScreen({ navigation, route }: { navigation
                     color={isSelected ? Colors.primary : Colors.textSecondary}
                   />
                   <Text
-                    style={[styles.traitLabel, isSelected && styles.traitLabelSel]}
+                    style={[
+                      styles.traitLabel,
+                      isSelected && styles.traitLabelSel,
+                    ]}
                   >
                     {trait.key.toUpperCase()}
                   </Text>
@@ -104,7 +112,10 @@ export default function RegisterTraitsScreen({ navigation, route }: { navigation
 
           {/* Continue */}
           <TouchableOpacity
-            style={[styles.continueBtn, !canContinue && styles.continueBtnDisabled]}
+            style={[
+              styles.continueBtn,
+              !canContinue && styles.continueBtnDisabled,
+            ]}
             activeOpacity={canContinue ? 0.85 : 1}
             onPress={handleContinue}
             disabled={!canContinue}
@@ -120,7 +131,6 @@ export default function RegisterTraitsScreen({ navigation, route }: { navigation
           >
             <Text style={styles.backBtnText}>Back</Text>
           </TouchableOpacity>
-
         </View>
       </ScrollView>
     </View>

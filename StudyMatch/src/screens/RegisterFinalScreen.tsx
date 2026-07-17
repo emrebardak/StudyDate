@@ -24,7 +24,7 @@ export default function RegisterFinalScreen({
   route: any;
 }) {
   const incoming = route?.params?.data ?? {};
-  const [focusGoal, setFocusGoal] = useState('');
+  const [focusGoal, setFocusGoal] = useState(incoming.focusGoal ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 

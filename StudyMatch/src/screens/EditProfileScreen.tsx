@@ -101,6 +101,59 @@ function photoComingSoon() {
   Alert.alert('Coming soon', "Photo uploads aren't available yet.");
 }
 
+const MIN_BIRTH_YEAR = 1900;
+
+/**
+ * Composes day/month/year text-input strings into a real `DATE` string
+ * ("YYYY-MM-DD"), or returns an error message if they don't form one.
+ * Cross-checks via a real Date object (not just range checks) so an
+ * impossible combination like Feb 30 is rejected, not silently accepted.
+ */
+function composeBirthdate(
+  day: string,
+  month: string,
+  year: string,
+): { value: string | null; error?: string } {
+  if (!day.trim() && !month.trim() && !year.trim()) {
+    return { value: null };
+  }
+  if (!day.trim() || !month.trim() || !year.trim()) {
+    return {
+      value: null,
+      error:
+        'Enter a complete birthdate (day, month, and year), or leave all three blank.',
+    };
+  }
+  const d = Number(day);
+  const m = Number(month);
+  const y = Number(year);
+  const currentYear = new Date().getFullYear();
+  if (
+    !Number.isInteger(d) ||
+    !Number.isInteger(m) ||
+    !Number.isInteger(y) ||
+    d < 1 ||
+    d > 31 ||
+    m < 1 ||
+    m > 12 ||
+    y < MIN_BIRTH_YEAR ||
+    y > currentYear
+  ) {
+    return { value: null, error: 'That birthdate is not valid.' };
+  }
+  const parsed = new Date(y, m - 1, d);
+  const isRealCalendarDate =
+    parsed.getFullYear() === y &&
+    parsed.getMonth() === m - 1 &&
+    parsed.getDate() === d;
+  if (!isRealCalendarDate || parsed > new Date()) {
+    return { value: null, error: 'That birthdate is not valid.' };
+  }
+  const mm = String(m).padStart(2, '0');
+  const dd = String(d).padStart(2, '0');
+  return { value: `${y}-${mm}-${dd}` };
+}
+
 export default function EditProfileScreen({ navigation }: { navigation: any }) {
   const [photoUrl, setPhotoUrl] = useState<string | undefined>(undefined);
   const [university, setUniversity] = useState('');
@@ -108,6 +161,12 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
   const [academicYear, setAcademicYear] =
     useState<NonNullable<User['year']>>('Freshman');
   const [bio, setBio] = useState('');
+  const [city, setCity] = useState('');
+  // Plain numeric day/month/year inputs (Phase 7) — deliberately not a native
+  // date-picker dependency (no new native module, per implemention.md's decision).
+  const [birthDay, setBirthDay] = useState('');
+  const [birthMonth, setBirthMonth] = useState('');
+  const [birthYear, setBirthYear] = useState('');
   const [selectedTraits, setSelectedTraits] = useState<string[]>([]);
   const [customTrait, setCustomTrait] = useState('');
   const [yearPickerOpen, setYearPickerOpen] = useState(false);
@@ -147,6 +206,14 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
           : 'Freshman',
       );
       setBio(user.bio ?? '');
+      setCity(user.city ?? '');
+      if (user.birthdate) {
+        // DATE columns come back from PostgREST as "YYYY-MM-DD".
+        const [y, m, d] = user.birthdate.split('-');
+        setBirthYear(y ?? '');
+        setBirthMonth(m ? String(Number(m)) : '');
+        setBirthDay(d ? String(Number(d)) : '');
+      }
       setSelectedTraits(user.currentTags ?? []);
     } catch (e: any) {
       setLoadError(
@@ -178,6 +245,14 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
 
   async function handleSave() {
     setSaveError('');
+    // Validated before the network call — a partial/invalid birthdate aborts
+    // the whole save rather than silently dropping just that field, so the
+    // user notices and fixes it instead of wondering why it didn't stick.
+    const birthdate = composeBirthdate(birthDay, birthMonth, birthYear);
+    if (birthdate.error) {
+      setSaveError(birthdate.error);
+      return;
+    }
     setSaving(true);
     try {
       const { data: auth } = await supabase.auth.getUser();
@@ -186,15 +261,20 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
         setSaveError('Your session expired. Please sign in again.');
         return;
       }
+      const payload: Record<string, unknown> = {
+        university: university.trim(),
+        department: department.trim(),
+        year: academicYear,
+        bio: bio.trim(),
+        city: city.trim(),
+        current_tags: selectedTraits,
+      };
+      if (birthdate.value) {
+        payload.birthdate = birthdate.value;
+      }
       const { error } = await supabase
         .from('users')
-        .update({
-          university: university.trim(),
-          department: department.trim(),
-          year: academicYear,
-          bio: bio.trim(),
-          current_tags: selectedTraits,
-        })
+        .update(payload)
         .eq('id', userId);
       if (error) {
         setSaveError(toFriendlyErrorMessage(error));
@@ -382,6 +462,59 @@ export default function EditProfileScreen({ navigation }: { navigation: any }) {
                 ))}
               </View>
             )}
+          </View>
+
+          <FormInput
+            label="City"
+            value={city}
+            onChangeText={setCity}
+            icon="location-outline"
+            placeholder="e.g. Istanbul"
+          />
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Birthdate</Text>
+            <View style={styles.birthdateRow}>
+              <View style={[styles.inputRow, styles.birthdateField]}>
+                <TextInput
+                  style={styles.input}
+                  value={birthDay}
+                  onChangeText={t =>
+                    setBirthDay(t.replace(/[^0-9]/g, '').slice(0, 2))
+                  }
+                  placeholder="DD"
+                  placeholderTextColor={Colors.textMuted}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                />
+              </View>
+              <View style={[styles.inputRow, styles.birthdateField]}>
+                <TextInput
+                  style={styles.input}
+                  value={birthMonth}
+                  onChangeText={t =>
+                    setBirthMonth(t.replace(/[^0-9]/g, '').slice(0, 2))
+                  }
+                  placeholder="MM"
+                  placeholderTextColor={Colors.textMuted}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                />
+              </View>
+              <View style={[styles.inputRow, styles.birthdateFieldYear]}>
+                <TextInput
+                  style={styles.input}
+                  value={birthYear}
+                  onChangeText={t =>
+                    setBirthYear(t.replace(/[^0-9]/g, '').slice(0, 4))
+                  }
+                  placeholder="YYYY"
+                  placeholderTextColor={Colors.textMuted}
+                  keyboardType="number-pad"
+                  maxLength={4}
+                />
+              </View>
+            </View>
           </View>
 
           <FormInput
@@ -691,6 +824,16 @@ const styles = StyleSheet.create({
     minHeight: 100,
     textAlignVertical: 'top',
     paddingTop: Spacing.xs,
+  },
+  birthdateRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  birthdateField: {
+    flex: 1,
+  },
+  birthdateFieldYear: {
+    flex: 1.5,
   },
   selectValue: {
     flex: 1,

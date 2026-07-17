@@ -1,11 +1,20 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { View, StyleSheet, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+} from 'react-native';
 import { supabase } from '../lib/supabase';
-import { profileRowToRegistrationData } from '../data/mappers';
+import {
+  profileRowToRegistrationData,
+  mapEmailVerificationStatusFromAPI,
+} from '../data/mappers';
 
 import DashboardScreen from '../screens/DashboardScreen';
 import DiscoveryScreen from '../screens/DiscoveryScreen';
@@ -17,14 +26,19 @@ import StudentProfileScreen from '../screens/StudentProfileScreen';
 import EditProfileScreen from '../screens/EditProfileScreen';
 import FilterScreen from '../screens/FilterScreen';
 import RegisterVerificationScreen from '../screens/RegisterVerificationScreen';
+import RegisterEmailCodeScreen from '../screens/RegisterEmailCodeScreen';
 import RegisterProfileScreen from '../screens/RegisterProfileScreen';
 import RegisterTraitsScreen from '../screens/RegisterTraitsScreen';
 import RegisterFinalScreen from '../screens/RegisterFinalScreen';
 import PostDateSurveyScreen from '../screens/PostDateSurveyScreen';
 import MatchFoundScreen from '../screens/MatchFoundScreen';
 
-import { Colors, Typography, Spacing } from '../theme';
-import type { RootStackParamList, TabParamList, RegistrationData } from '../types';
+import { Colors, Typography, Spacing, Radius } from '../theme';
+import type {
+  RootStackParamList,
+  TabParamList,
+  RegistrationData,
+} from '../types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<TabParamList>();
@@ -71,14 +85,28 @@ export default function AppNavigator() {
   // of always landing on RegisterVerification. initialRouteName only applies at the
   // Stack.Navigator's first mount, so we hold off rendering it until this is known.
   const [initialRoute, setInitialRoute] = useState<
-    'RegisterVerification' | 'MainTabs' | 'RegisterProfile' | null
+    | 'RegisterVerification'
+    | 'RegisterEmailCode'
+    | 'MainTabs'
+    | 'RegisterProfile'
+    | null
   >(null);
-  // Only populated when resuming an incomplete registration (see below).
+  // Only populated when resuming an incomplete registration (see below). In
+  // current usage this will almost always resolve to just `{ email }` — see
+  // profileRowToRegistrationData's doc comment in data/mappers.ts for why.
   const [pendingProfileData, setPendingProfileData] = useState<
     Partial<RegistrationData> | undefined
   >(undefined);
+  // Set only when the row query ITSELF fails (network hiccup, RLS misconfig, or a
+  // handle_new_user() trigger-lag race right before the row exists yet) — not when it
+  // succeeds and simply reports email_verified=false. Unlike the profile-completeness
+  // check below, this one must NOT fail open to MainTabs: failing open here would let a
+  // transient error silently bypass the app's only verification gate. Blocks behind a
+  // retry instead of guessing.
+  const [checkError, setCheckError] = useState(false);
 
-  useEffect(() => {
+  const resolveSession = useCallback(() => {
+    setCheckError(false);
     supabase.auth.getSession().then(async ({ data }) => {
       const session = data.session;
       if (!session) {
@@ -93,19 +121,33 @@ export default function AppNavigator() {
       // absence reliably signals an incomplete profile without a new column.
       const { data: row, error } = await supabase
         .from('users')
-        .select('name, university, department, current_tags, current_goal_text')
+        .select(
+          'name, university, department, current_tags, current_goal_text, email_verified',
+        )
         .eq('id', session.user.id)
         .single();
 
       if (error) {
-        // Fail open on a transient fetch error — don't block an already-
-        // registered user from the app over a network hiccup; this matches
-        // the prior (session-only) behavior when the check itself fails.
-        setInitialRoute('MainTabs');
+        setCheckError(true);
+        return;
+      }
+
+      // Same reasoning as the !row?.name check below: an unverified user has
+      // a session (signUp() grants one immediately — see RegisterVerificationScreen.tsx)
+      // but hasn't proven control of their email yet. Checked first since it's earlier
+      // in the flow than profile completion.
+      if (!mapEmailVerificationStatusFromAPI(row).emailVerified) {
+        setPendingProfileData(
+          profileRowToRegistrationData(row, session.user.email ?? undefined),
+        );
+        setInitialRoute('RegisterEmailCode');
         return;
       }
 
       if (!row?.name) {
+        // Fail open here on purpose (profile-completeness only, not the security-relevant
+        // email_verified check above): worst case is a blank-profile inconvenience, not a
+        // bypassed verification gate — genuinely different risk profile.
         setPendingProfileData(
           profileRowToRegistrationData(row, session.user.email ?? undefined),
         );
@@ -116,6 +158,33 @@ export default function AppNavigator() {
       setInitialRoute('MainTabs');
     });
   }, []);
+
+  useEffect(() => {
+    resolveSession();
+  }, [resolveSession]);
+
+  if (checkError) {
+    return (
+      <View style={styles.splash}>
+        <Ionicons
+          name="cloud-offline-outline"
+          size={40}
+          color={Colors.danger}
+        />
+        <Text style={styles.checkErrorText}>
+          Couldn't confirm your account status. Check your connection and try
+          again.
+        </Text>
+        <TouchableOpacity
+          style={styles.retryBtn}
+          activeOpacity={0.85}
+          onPress={resolveSession}
+        >
+          <Text style={styles.retryBtnText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   if (initialRoute === null) {
     return (
@@ -137,6 +206,11 @@ export default function AppNavigator() {
         <Stack.Screen
           name="RegisterVerification"
           component={RegisterVerificationScreen}
+        />
+        <Stack.Screen
+          name="RegisterEmailCode"
+          component={RegisterEmailCodeScreen}
+          initialParams={{ data: pendingProfileData ?? {} }}
         />
         <Stack.Screen
           name="RegisterProfile"
@@ -172,6 +246,25 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: Spacing.xl,
+    gap: Spacing.md,
+  },
+  checkErrorText: {
+    fontSize: Typography.size.base,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+  },
+  retryBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.xl,
+    marginTop: Spacing.sm,
+  },
+  retryBtnText: {
+    fontSize: Typography.size.base,
+    fontWeight: Typography.weight.bold,
+    color: Colors.textOnYellow,
   },
   tabBar: {
     backgroundColor: Colors.tabBg,

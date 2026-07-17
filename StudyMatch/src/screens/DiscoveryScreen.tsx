@@ -12,9 +12,9 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useFocusEffect } from '@react-navigation/native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Spacing, Radius, Typography } from '../theme';
-import type { DiscoveryFilters, User } from '../types';
+import type { DiscoveryFilters, DiscoveryCandidate } from '../types';
 import { supabase } from '../lib/supabase';
-import { mapUserFromAPI } from '../data/mappers';
+import { mapDiscoveryCandidateFromAPI } from '../data/mappers';
 import { toFriendlyErrorMessage } from '../lib/errors';
 
 const { width, height } = Dimensions.get('window');
@@ -113,7 +113,7 @@ function LockedState({ onGoToChat }: { onGoToChat: () => void }) {
 }
 
 // ── Card Face (static content) ────────────────────────────────────────────────
-function CardFace({ profile }: { profile: User }) {
+function CardFace({ profile }: { profile: DiscoveryCandidate }) {
   return (
     <>
       {/* ── Photo area ── */}
@@ -127,6 +127,14 @@ function CardFace({ profile }: { profile: User }) {
         {/* Verified badge */}
         <View style={styles.verifiedBadge}>
           <Ionicons name="checkmark-circle" size={24} color={Colors.primary} />
+        </View>
+
+        {/* Match score badge (Phase 7) — real number, per Session 11's precedent
+            for bringing back a compatibility badge once a real algorithm existed. */}
+        <View style={styles.matchScoreBadge}>
+          <Text style={styles.matchScoreBadgeText}>
+            {profile.matchScore}% Match
+          </Text>
         </View>
 
         {/* Gradient-like overlay: name + academic card fields (PRD §4 — University /
@@ -182,7 +190,7 @@ export default function DiscoveryScreen({
   const [activeFilters, setActiveFilters] = useState<
     DiscoveryFilters | undefined
   >(route?.params?.filters);
-  const [candidates, setCandidates] = useState<User[]>([]);
+  const [candidates, setCandidates] = useState<DiscoveryCandidate[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -256,17 +264,53 @@ export default function DiscoveryScreen({
       setLocked(false);
       setLockedMatchId(null);
 
-      const { data: rows, error: candidatesError } = await supabase
+      let query = supabase
         .from('discoverable_users')
         .select('*')
         .neq('id', userId)
-        .is('active_match_id', null)
+        .is('active_match_id', null);
+
+      // Each filter chained only when the caller actually set it — an unset
+      // filter must never exclude anyone (Phase 7 requirement). selectedUni
+      // (an exact pill choice) takes priority over institution (free-typed
+      // search text) as the source for an exact .eq() match; either can supply it.
+      const university = (
+        activeFilters?.selectedUni ||
+        activeFilters?.institution ||
+        ''
+      ).trim();
+      if (university) {
+        query = query.eq('university', university);
+      }
+      if (activeFilters?.departments?.length) {
+        query = query.in('department', activeFilters.departments);
+      }
+      // 18/50 are the age RangeSlider's own full-range bounds (FilterScreen.tsx) —
+      // a value still at either extreme means the caller never actually narrowed it.
+      if (
+        typeof activeFilters?.minAge === 'number' &&
+        activeFilters.minAge > 18
+      ) {
+        query = query.gte('age', activeFilters.minAge);
+      }
+      if (
+        typeof activeFilters?.maxAge === 'number' &&
+        activeFilters.maxAge < 50
+      ) {
+        query = query.lte('age', activeFilters.maxAge);
+      }
+      if (activeFilters?.sameCityOnly) {
+        query = query.eq('same_city', true);
+      }
+
+      const { data: rows, error: candidatesError } = await query
+        .order('match_score', { ascending: false })
         .limit(CANDIDATE_BATCH_SIZE);
       if (candidatesError) {
         setError(toFriendlyErrorMessage(candidatesError));
         return;
       }
-      setCandidates((rows ?? []).map(mapUserFromAPI));
+      setCandidates((rows ?? []).map(mapDiscoveryCandidateFromAPI));
       setDeckIndex(0);
     } catch (e: any) {
       setError(
@@ -277,7 +321,7 @@ export default function DiscoveryScreen({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeFilters]);
 
   useEffect(() => {
     loadDiscovery();
@@ -394,7 +438,7 @@ export default function DiscoveryScreen({
   // swallowed; a null currentUserId additionally re-runs loadDiscovery() to
   // re-resolve auth state and surface the real "Not signed in" ErrorState.
   async function recordSwipe(
-    candidate: User | undefined,
+    candidate: DiscoveryCandidate | undefined,
     direction: 'left' | 'right',
   ) {
     if (!candidate) return;
@@ -610,9 +654,6 @@ export default function DiscoveryScreen({
             <Ionicons name="options-outline" size={20} color={Colors.primary} />
             {activeFilters && <View style={styles.filterDot} />}
           </TouchableOpacity>
-          <TouchableOpacity style={styles.avatarCircle} activeOpacity={0.8}>
-            <Text style={styles.avatarInitial}>A</Text>
-          </TouchableOpacity>
         </View>
       </View>
 
@@ -661,21 +702,6 @@ const styles = StyleSheet.create({
     fontWeight: Typography.weight.bold,
     color: Colors.primary,
     letterSpacing: 0.5,
-  },
-  avatarCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.surfaceHigh,
-    borderWidth: 2,
-    borderColor: Colors.borderGold,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitial: {
-    fontSize: Typography.size.sm,
-    fontWeight: Typography.weight.bold,
-    color: Colors.primary,
   },
   headerRight: {
     flexDirection: 'row',
@@ -780,6 +806,23 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: Spacing.md,
     right: Spacing.md,
+  },
+  matchScoreBadge: {
+    position: 'absolute',
+    top: Spacing.md,
+    left: Spacing.md,
+    backgroundColor: Colors.surfaceHigh,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.borderGold,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+  },
+  matchScoreBadgeText: {
+    fontSize: Typography.size.xs,
+    fontWeight: Typography.weight.bold,
+    color: Colors.primary,
+    letterSpacing: 0.5,
   },
   photoOverlay: {
     position: 'absolute',

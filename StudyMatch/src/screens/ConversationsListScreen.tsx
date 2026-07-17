@@ -103,7 +103,6 @@ export default function ConversationsListScreen({
   navigation: any;
 }) {
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
-  const [myInitial, setMyInitial] = useState('?');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -122,13 +121,6 @@ export default function ConversationsListScreen({
         setError('Not signed in.');
         return;
       }
-
-      const { data: ownRow } = await supabase
-        .from('users')
-        .select('name')
-        .eq('id', userId)
-        .single();
-      setMyInitial(ownRow?.name ? ownRow.name[0].toUpperCase() : '?');
 
       const { data: matchRows, error: matchError } = await supabase
         .from('matches')
@@ -149,7 +141,7 @@ export default function ConversationsListScreen({
         m.user1_id === userId ? m.user2_id : m.user1_id,
       );
       const { data: partners } = await supabase
-        .from('users')
+        .from('matched_users')
         .select('id, name')
         .in('id', partnerIds);
       const nameById = new Map(
@@ -192,9 +184,6 @@ export default function ConversationsListScreen({
         <View style={styles.headerLeft}>
           <Ionicons name="school" size={22} color={Colors.primary} />
           <Text style={styles.headerTitle}>StudyMatch</Text>
-        </View>
-        <View style={styles.avatarCircleHeader}>
-          <Text style={styles.avatarInitialHeader}>{myInitial}</Text>
         </View>
       </View>
 
@@ -255,22 +244,6 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     letterSpacing: 0.5,
   },
-  avatarCircleHeader: {
-    width: 38,
-    height: 38,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.surfaceHigh,
-    borderWidth: 2,
-    borderColor: Colors.borderGold,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitialHeader: {
-    fontSize: Typography.size.sm,
-    fontWeight: Typography.weight.bold,
-    color: Colors.primary,
-  },
-
   scroll: { flex: 1 },
   scrollContent: {
     paddingHorizontal: Spacing.base,

@@ -712,3 +712,224 @@ Session 9 flagged, but didn't fix: a user who signs up (Step 1) and quits before
 - On-device verification pass for this fix
 - If registration is ever changed to persist incrementally (writing at Step 2/3 instead of only Step 4), `profileRowToRegistrationData` will start actually mattering for prefill — worth revisiting `RegisterProfileScreen`/`RegisterTraitsScreen`'s own `useState` initializers then, since they currently ignore `route.params.data` entirely except when spreading it forward
 - Same backend items as Session 18/19/20/21 — unchanged
+
+---
+
+## Session 23 — Cancel-study-date UI (BUG 1) + registration-resume correctness fixes (BUG 2)
+
+### What was done
+
+Two independent bug reports, fixed in one session.
+
+#### BUG 1 — `cancel_study_date` RPC had zero frontend callers
+Session 18 built the `-10` last-minute-cancellation trust tier as a backend RPC (`cancel_study_date`, Migration 18/19), but nothing in the frontend ever called it — confirmed via a full `grep` of `src/` before starting. Checked both candidate screens per the task: `StudyDatePlannerScreen.tsx` is purely a creation form (no listing of existing dates at all), while `DashboardScreen.tsx`'s "Upcoming Sessions" card is the only place an existing future study date is actually listed — that's where the action belongs.
+
+- `DashboardScreen.tsx` — `SessionRow` gained a small cancel icon; tapping it runs `handleCancelSession(studyDateId)`, which confirms via `Alert.alert` (mirroring `ChatScreen.tsx`'s `handleEndMatch` pattern) before calling `supabase.rpc('cancel_study_date', { p_study_date_id })`. No client-side 2h-window computation — the RPC is server-authoritative on whether the penalty applies, matching the task's framing. On success, `loadDashboard()` re-runs (existing `useFocusEffect` refresh pattern already used elsewhere in this screen). On failure, a second `Alert.alert` shows the mapped friendly message.
+- `src/lib/errors.ts` — `toFriendlyErrorMessage` gained a `codeMessages` option: a per-call-site `Record<string, string>` of custom error codes to messages, checked after the built-in `23505`/`42501` cases and before the generic fallback. Needed because `cancel_study_date`'s `ST007`/`ST008`/`ST009` codes aren't `23505` (the only code the helper previously had special handling for) — this is a small, backward-compatible extension (existing callers that don't pass `codeMessages` are unaffected).
+
+**Verified** — REST-level script (throwaway, deleted after use, local Supabase stack): formed a real mutual match between two synthetic accounts (right-swipe both ways), then all four required scenarios passed exactly as specified — (1) cancel within 2h → `status='cancelled'`, caller's `trust_score` 100→90; (2) cancel outside 2h (5h out) → `trust_score` unchanged at 90; (3) cancel an already-past date → `ST009`; (4) cancel the same date twice → `ST008`. Both test accounts deleted afterward, confirmed via a follow-up `count(*)` returning `0`. `npx tsc --noEmit` — **0 errors**.
+
+Docker Desktop had stopped running between sessions and needed restarting (plus `npx supabase start` to bring the local stack back up) before this verification could run — noted only because it explains the extra step, not a code issue.
+
+#### BUG 2 — registration-resume (Session 22) couldn't actually pre-fill anything
+A follow-up review of Session 22's fix found two stacked problems:
+
+- **Reason A** (real bug, independent of Reason B): `RegisterProfileScreen.tsx`'s `fullName`/`institution`/`department` state, `RegisterTraitsScreen.tsx`'s `selected` traits state, and `RegisterFinalScreen.tsx`'s `focusGoal` state all initialized via bare `useState('')`/`useState([])`, never reading the `incoming` object (`route.params.data`) they already receive — `incoming` was only ever spread forward when navigating to the *next* step, never read into the *current* step's own inputs. Fixed all three to `useState(incoming.<field> ?? <empty>)`.
+- **Reason B**: `registrationToProfileUpdate` (and therefore `public.users`) only ever gets written once, inside Step 4's "Complete Archive" handler — Steps 2-3 never persist anything, only pass data forward via navigation params. Since `AppNavigator.tsx`'s incomplete-registration gate is `!row?.name`, reaching `profileRowToRegistrationData` at all is only possible when `name` (and every other registration field) is guaranteed `NULL` — a real contradiction that meant the mapper could, in current usage, only ever populate `{ email }`, never a user's actually-typed values. Presented both fix options from the task (incremental per-step persistence vs. correcting the overstated claim) rather than picking unilaterally; **user chose option (b)** — keep the one-shot Step-4-only write model, fix the comments that overstated what's restored, since CLAUDE.md explicitly prefers not over-building beyond what's asked.
+  - `src/data/mappers.ts` — rewrote `profileRowToRegistrationData`'s doc comment to state plainly that it does NOT currently restore typed values (only `email`, by construction), why, and what would need to change (incremental persistence) for that to become true.
+  - `AppNavigator.tsx` — expanded the `pendingProfileData` state comment to point at the corrected mapper doc comment instead of implying real data gets restored.
+
+Reason A's fix ships regardless of the (a)/(b) choice — an input field ignoring its own passed-in initial value is a real, free-standing bug, just one that (per Reason B) isn't exercised with non-empty data under the current one-shot-write model. It's already-correct behavior waiting for Reason B's data to ever actually flow.
+
+**Verified**: `npx tsc --noEmit` — **0 errors**. The "sign up, complete only Step 1, relaunch → lands on `RegisterProfile`" behavior was already verified in Session 22 and is unchanged by this session (Reason A/B fixes don't touch `AppNavigator.tsx`'s gating logic, only what happens with the data once there). Confirmed by re-reading: the corrected comments in `mappers.ts`/`AppNavigator.tsx` no longer claim data restoration happens today.
+
+### Next steps (suggested)
+- On-device verification pass for BUG 1's Cancel action and BUG 2's prefill fix (Reason A's `useState(incoming...)` change specifically needs an actual second-attempt registration walkthrough once/if Reason B's incremental-persistence option is ever revisited)
+- If incremental per-step persistence (BUG 2 option (a)) is ever wanted later, `AppNavigator.tsx`'s completeness check will need to change from `!row?.name` to `!row?.current_goal_text` (the true Step-4-only field) — flagged in the task, not implemented, since (b) was chosen
+- Same backend items as Session 18/19/20/21 — unchanged
+
+---
+
+## Session 24 — Real (offline-mode) email verification codes
+
+### What was done
+
+Replaced Phase 1's mock `verification_code` (hardcoded `'000000'` default, never checked anywhere) with a real random-code flow. **Offline mode only**: no email is actually sent — the code is generated server-side and read back by the client via its own-row SELECT, matching the pattern the previous, uncommitted draft of this feature had already set up on the frontend.
+
+**Found an uncommitted, half-finished draft of the same feature already in the working tree** (migration `20260716070000_email_verification.sql`, plus `RegisterEmailCodeScreen.tsx`, `AppNavigator.tsx`'s `email_verified` routing gate, and `src/lib/config.ts`'s `EMAIL_VERIFICATION_MODE` switch), apparently from a prior session that never got logged or committed. It differed from this session's more detailed spec in real ways — no expiry column at all, bare literals instead of named constants, a non-standard `EV0xx` error-code prefix instead of this project's established `ST0xx` convention, an RPC named `resend_verification_code()` that returned the code as `TEXT`, and — the actual security gap — `protect_privileged_user_columns()` was never extended to the new columns, so a client could `PATCH /rest/v1/users {email_verified: true}` directly and self-verify without ever knowing the real code (the same class of bug Session 6 closed for `active_match_id`/`trust_score`). Interestingly, `RegisterEmailCodeScreen.tsx`'s `handleVerify` was *already* written expecting `ST012`–`ST015` codes that didn't exist in the draft migration yet — the frontend had apparently already converged on this session's target design before the backend caught up. Asked the user how to reconcile; **chose "replace it entirely"**: rewrite the migration in place (same filename — never committed, so no history to preserve) and fix the two frontend call sites still on the old contract.
+
+#### Backend — one migration, rewritten in place: `20260716070000_email_verification.sql` (Migration 20; the old draft had mis-numbered itself "19", colliding with `trust_score_named_constants.sql`)
+- `public.users` gains `email_verified BOOLEAN NOT NULL DEFAULT false` and `verification_code_expires_at TIMESTAMPTZ`; the old `verification_code TEXT DEFAULT '000000'` loses its default (every row now gets a real value from `handle_new_user()`).
+- `generate_verification_code()` — new shared helper (named constant: 6 digits), used by both call sites below so the digit-count logic exists in exactly one place. Real duplicable *logic*, not just a constant, so — unlike the expiry value — it's a function, not a re-declared `CONSTANT`.
+- `handle_new_user()` (Migration 3) — now inserts a real generated code + a 15-minute expiry (named `CONSTANT INTERVAL`, **user's explicit choice, asked directly rather than guessed**) instead of relying on the old column default.
+- `protect_privileged_user_columns()` (Migration 8) — extended to guard `email_verified`/`verification_code`/`verification_code_expires_at` alongside the existing `active_match_id`/`trust_score`, closing the self-verify gap described above. Same `SECURITY INVOKER` reasoning as Migration 8 (a `DEFINER` guard would read `current_user='postgres'` unconditionally and become a no-op).
+- `verify_email_code(p_code)` — `SECURITY DEFINER`, operates only on `auth.uid()`'s own row. Checks, in order, not-already-verified (`ST013`/`ALREADY_VERIFIED`), not-expired (`ST014`/`CODE_EXPIRED`), then exact code match (`ST015`/`INVALID_CODE`); a missing profile row is `ST012`/`NOT_FOUND` (defensive — shouldn't happen given `authenticated`-only `GRANT EXECUTE`). Sets `email_verified = true` on success.
+- `regenerate_verification_code()` — the resend/expiry RPC the task asked for (renamed from the draft's `resend_verification_code()`). `RETURNS void`, not the code as `TEXT`: the RPC contract is written so a future *online* mode (real email delivery) can swap in without changing either function's signature — the client re-reads the new code via the same own-row SELECT it already uses to display the initial signup code, rather than the RPC handing it back directly. Rejects an already-verified caller with `ST013`.
+- All three new/changed columns' point values and thresholds follow Session 20's named-constants habit; `ST0xx` error codes continue this project's established convention (`ST001`–`ST011` already existed) rather than introducing a new prefix.
+
+#### Frontend — two call sites updated to match the finalized contract
+- `RegisterEmailCodeScreen.tsx`'s `handleResend` — RPC call renamed to `regenerate_verification_code`, dropped the `TEXT`-return handling, now calls `loadOwnCode()` afterward (reusing the screen's existing own-row SELECT) to pick up the new code, and its `codeMessages` map switched from `EV001` to `ST012`/`ST013`. `handleVerify` needed no change — it already targeted the final `ST012`–`ST015` scheme.
+- `src/lib/config.ts` — updated the `EMAIL_VERIFICATION_MODE` doc comment to describe the void-returning RPC + re-fetch pattern instead of the old code-returning one.
+- Nothing else needed touching: `AppNavigator.tsx`'s `email_verified` routing gate, `RegisterVerificationScreen.tsx`'s post-signup navigation to `RegisterEmailCode`, and the `RootStackParamList` type addition were all already correct in the uncommitted draft and didn't reference the parts of the contract that changed.
+
+#### Verified
+- `npx supabase db reset` — all 20 migrations replay cleanly from an empty DB.
+- **REST-level script** (throwaway Node + real `@supabase/supabase-js` client, local stack, deleted after use — matching this project's established pattern), 17 checks, 3 synthetic accounts, all cleaned up afterward (confirmed via a follow-up query returning zero rows):
+  - Signup generates a genuine 6-digit code with an expiry ~15 minutes out; `email_verified` starts `false`.
+  - Wrong code → `ST015`; correct code → succeeds, `email_verified` becomes `true`; verifying again → `ST013`; regenerating after already-verified → `ST013`.
+  - **Direct client `PATCH /rest/v1/users {email_verified: false}` on one's own row → blocked with `ST002`** — the gap in the old draft, confirmed closed.
+  - `regenerate_verification_code()` produces a different 6-digit code; the *old* code stops working (`ST015`) and the *new* one verifies successfully.
+  - Expiry path: backdated `verification_code_expires_at` via `docker exec psql` as the `postgres` role (the guard trigger's own documented exemption — a `service_role` REST call couldn't be used here since Migration 4 never granted `service_role` table privileges on `public.users`, a pre-existing, unrelated gap, not something this session touched) → the previously-valid code then correctly rejects with `ST014`.
+- `npx tsc --noEmit` — **0 errors**.
+- Not verified on a running React Native app — same standing limitation as every session since 12 (no emulator/device access in this environment).
+
+### Next steps (suggested)
+- `docs/backend-dev.md`'s "Real email verification" checklist item updated to reflect this session (see that file's Auth Setup section).
+- On-device verification pass for the full registration → email-code → profile flow.
+- The pre-existing `service_role` grant gap on `public.users` (hit incidentally while testing the expiry path) — flagged, not fixed, since it's unrelated to this task and no code path in the app currently depends on `service_role` REST access to that table (the match-timeout cron and other admin paths call SQL functions directly, not through PostgREST).
+- Online mode (real email delivery) remains explicitly out of scope — deferred, per the task, to a later Edge Function/Database Webhook that can swap in against the same `verify_email_code`/`regenerate_verification_code` signatures.
+
+---
+
+## Session 25 — Close the matched-partner/swiped-right verification-code leak (code-review finding)
+
+### What was done
+
+External code-review finding: `users_select_matched` (Migration 6) is a row-level-only RLS policy on `public.users` with no column restriction. Combined with Migration 4's table-wide `GRANT SELECT`, that meant a matched partner could `select=verification_code` directly against `public.users` and read the other person's live verification code + expiry (Session 24's new columns) — the exact class of gap `discoverable_users` (Migration 10) already solved for Discovery, never extended to the matched-partner read path.
+
+**Verified before implementing** (per the receiving-code-review discipline): read the policy at the cited line, confirmed the no-column-restriction claim directly, and grepped every real frontend consumer of a matched partner's `users` row before designing the fix, rather than guessing at a column list.
+
+#### Backend — two migrations
+1. `20260716080000_matched_users_view.sql` (Migration 21) — dropped `users_select_matched` entirely (closing the actual bypass, not leaving a parallel path — same pattern as Sessions 8/10) and replaced it with `matched_users`, a plain (non-`security_invoker`) view reusing `discoverable_users`' exact column list verbatim (already vetted for a *wider* audience than "someone you're matched with"), excluding `email`/`verification_code`/`verification_code_expires_at`/`email_verified`. Column-level `GRANT`/`REVOKE` was considered and rejected — it's role-wide, not row-scoped, so it would have also broken `RegisterEmailCodeScreen.tsx`'s legitimate own-row `verification_code` read (same `authenticated` role, same table).
+2. `20260716083000_swiped_right_users_view.sql` (Migration 22) — **found while verifying migration 21, not in the original finding**: the REST verification script proved dropping `users_select_matched` alone did *not* close the gap — a real mutual match still let one partner read the other's `verification_code`, because `users_select_swiped_right` (Migration 13) is a second, independent policy with the identical flaw, and a match can only form via mutual right-swipes (Migration 12), so every matched pair necessarily also satisfies it. Applied the identical treatment: dropped the policy, added `swiped_right_users` (same column list, outbound-only predicate).
+
+#### Frontend — repointed the 5 real call sites that break once the two policies are dropped
+- `ChatScreen.tsx`, `MatchFoundScreen.tsx`, `ConversationsListScreen.tsx` → `matched_users` (partner name lookups).
+- `DashboardScreen.tsx`'s "Recently Liked" query → `swiped_right_users`.
+- `StudentProfileScreen.tsx` is still fully mock data (confirmed via grep) — the "badges/photos for the reveal flow" case the original Migration 6 comment cited as this policy's purpose isn't wired to real data yet, so `matched_users`' column list is forward-looking there, not exercised today.
+
+#### Verified
+- `npx supabase db reset` — all 22 migrations replay cleanly from an empty DB.
+- **REST-level script** (throwaway, deleted after use), 18 checks, 4 synthetic accounts (cleaned up after): a real mutual match (A↔B) and an unreciprocated one-sided swipe (A→D, no match) to isolate the two policies from each other — direct `public.users` reads of verification columns *and* `name` return 0 rows for both the matched partner and the swiped-on-but-unmatched user; `matched_users`/`swiped_right_users` both 404 on the verification columns (they don't exist on the view at all) while returning real `name`/`university`/`department` values; the outbound-only direction holds (D, who never swiped on A, gets 0 rows for A via `swiped_right_users`); a bystander gets 0 rows from both views; the owner's own-row read (including `verification_code`) is unaffected; all 4 real screen-shaped queries (Chat, MatchFound, ConversationsList, Dashboard) return correct data through the new views.
+- `npx tsc --noEmit` — **0 errors**.
+
+### Next steps (suggested)
+- On-device verification pass, same standing limitation as every session since 12.
+- The `matched_users`/`swiped_right_users` column list is reused verbatim across three views now (`discoverable_users`, `matched_users`, `swiped_right_users`) with no shared abstraction — deliberate, mirroring this project's established preference (Sessions 19/20/24) for duplicating a small, explicit list over inventing shared-view machinery Postgres doesn't cleanly support; a real drift risk exists if a future column addition updates one list and not the others, flagged here for awareness.
+- `matched_users` preserves the dropped policy's exact original semantics (visible for a match of ANY status — active, completed, terminated, expired — not just active). Whether ex-partners should keep any read access at all is a separate, pre-existing question this session didn't change or re-litigate.
+
+---
+
+## Session 26 — Phase 7 schema half: birthdate + viewer-relative match scoring
+
+### What was done
+
+Implemented the backend half of `implemention.md` Phase 7 (recommendation & filter-based matching) — one migration, `20260716090000_recommendation_scoring.sql` (Migration 23). All product decisions were pre-confirmed in implemention.md (filtering + ranking, score in SQL, `birthdate` column with no native date-picker, same-city instead of GPS) — none re-litigated. **Frontend wiring (filters, score badge, EditProfile birthdate input) is explicitly the other half of Phase 7, not done this session.**
+
+- `ALTER TABLE public.users ADD COLUMN birthdate DATE` — nullable, no backfill, ordinary client-writable profile field (deliberately not added to `protect_privileged_user_columns`).
+- `compute_match_score(p_viewer public.users, p_candidate public.users)` — `IMMUTABLE` PL/pgSQL function holding all weights as named `CONSTANT`s (Session 20 convention; a view body can't declare constants, which is why this is a function): department 30, university 15, city 10, shared `current_tags` entry 8 capped at 5 (max 40), pacing 10, audio 5, fuel 5; raw max 115 → `LEAST(100)`. Every comparison explicitly NULL-guards both sides — unknown contributes 0, never NULLs the total or excludes the row. Composite `public.users` params instead of 14 scalars. One non-obvious grant detail, verified by the passing view queries: EXECUTE on functions called by a view is checked against the *querying* user (unlike table access, which is checked against the view owner), so the function is granted to `authenticated` — REVOKE-only would have broken the view for every client.
+- `CREATE OR REPLACE VIEW discoverable_users` — the 21 existing columns kept in order (a `CREATE OR REPLACE VIEW` requirement), all three Migration 11 predicates and `security_barrier` unchanged, three columns appended: `age` (`date_part('year', age(birthdate))::int`, NULL when unset; raw `birthdate` NOT exposed — same precedent as excluding `email`), `same_city` (strict boolean, false not NULL when either side unknown), `match_score` (0-100, viewer-relative). Viewer context comes from `LEFT JOIN public.users viewer ON viewer.id = auth.uid()` — LEFT so a missing viewer row degrades to score 0 rather than emptying the deck; `auth.uid()` re-evaluating per caller inside a non-`security_invoker` view was proven in Session 8. `matched_users`/`swiped_right_users` needed no change: their explicit column lists (the very reason they exist) exclude `birthdate` automatically.
+
+#### Verified
+- `npx supabase db reset` — all 23 migrations replay cleanly.
+- **REST-level script** (throwaway, deleted after; 5 synthetic accounts, cleaned up): identical-profile candidate scores exactly **100** (clamp from raw 115) with `same_city=true`, `age=27`; the **same candidate** seen by a zero-overlap viewer scores **0** with `same_city=false` (genuinely viewer-relative); 6 shared tags score **40** not 48 (cap enforced); a candidate with `birthdate`+`city` both NULL still appears with partial score **30** (department only), `age=null`, `same_city=false`; `select=birthdate` on the view errors (not exposed); owner's own-row `birthdate` read works.
+- `npx tsc --noEmit` — **0 errors** (no frontend files touched).
+
+### Next steps (suggested)
+- Phase 7 frontend half per implemention.md: `DiscoveryFilters.distance` → `sameCityOnly`, `mapDiscoveryCandidateFromAPI`, DiscoveryScreen filter chaining + `.order('match_score', {ascending:false})` + score badge, FilterScreen wiring, EditProfileScreen birthdate/city inputs.
+- On-device verification pass — same standing limitation since Session 12.
+
+---
+
+## Session 27 — Close the login-path `email_verified` bypass (bug report, follow-up on Session 24)
+
+### What was done
+
+Bug report: `RegisterVerificationScreen.tsx`'s login branch (`mode === 'login'`) called `signInWithPassword()` and, on success, went straight to `navigation.reset({ routes: [{ name: 'MainTabs' }] })` — never checking `email_verified`. Since this project's local config has `enable_confirmations = false` (Supabase Auth's own confirmation is disabled), `email_verified` (Session 24) is the *only* verification gate in the app, and this path skipped it entirely: an account that signed up but never entered its code could switch to "Log In" and land in `MainTabs` unverified, bypassing `RegisterEmailCode` altogether. `AppNavigator.tsx`'s cold-start check already had this gate (Session 24) — this login submit path just never went through it.
+
+Frontend-only fix, no RPC/migration changes, as scoped:
+- `RegisterVerificationScreen.tsx` — after a successful `signInWithPassword`, reads `data.user.id` from the response and fetches that user's own `email_verified` (`users_select_own` RLS, same read `RegisterEmailCodeScreen.tsx`/`AppNavigator.tsx` already rely on). If `false`, navigates to `RegisterEmailCode` with `{ data: { email: trimmed } }` — the identical literal shape the signup branch already passes, not a case `profileRowToRegistrationData` actually fits (no row data needs mapping here, just a boolean gate check). Otherwise falls through to the original `navigation.reset` → `MainTabs`. A transient fetch error fails open (falls through to `MainTabs`), mirroring `AppNavigator.tsx`'s identical documented precedent rather than inventing a stricter policy for this one call site.
+
+**Verified**: `npx tsc --noEmit` — **0 errors**. REST-level script (throwaway, local stack, this project's established pattern): (1) signed up a fresh `.edu.tr` account, signed back in via a fresh password-grant token (simulating "quit app, reopen, Log In") without ever calling `verify_email_code` — confirmed `email_verified=false` on the row the login branch's exact query reads, meaning the fixed code now routes to `RegisterEmailCode` instead of `MainTabs`; (2) positive control — signed up a second account, verified it via `verify_email_code`, then signed back in the same way — confirmed `email_verified=true`, so a legitimately verified user's login is unaffected and still reaches `MainTabs`.
+
+### Next steps (suggested)
+- The equivalent `!row?.name` (incomplete-registration) gap on this same login path is still open — flagged in Session 24's dev log already, unchanged by this session since the bug report scoped this fix to `email_verified` only.
+- On-device verification of the actual UI transition (fetch/db-level behavior confirmed via REST; the navigation call itself wasn't exercised on a running app, same standing limitation as prior sessions).
+
+---
+
+## Session 28 — Stop failing open to MainTabs on a broken session-check query (bug report, follow-up on Session 24)
+
+### What was done
+
+Bug report: `AppNavigator.tsx`'s session-resolution effect copied Session 22's "fail open" decision wholesale onto the `email_verified` check added in Session 24 — on any query error (network hiccup, RLS misconfig, or a `handle_new_user()` trigger-lag race right after signup, before the row exists yet), it defaulted straight to `MainTabs`. Session 22's fail-open precedent was for the unrelated profile-completeness (`!row?.name`) check, where the worst case is a blank-profile inconvenience — it doesn't transfer to `email_verified`, which is the app's only verification gate (Session 27): failing open there means any transient error bypasses verification entirely.
+
+Asked the user how the fallback should behave, since there's no existing error/retry screen in the app to reuse. Chose: a blocking retry screen (not a fail-closed redirect to `RegisterVerification`) — keeps the session/auth state untouched, best fits a genuinely transient cause.
+
+- `AppNavigator.tsx` — extracted the session-resolution effect's body into a `useCallback`'d `resolveSession()` so it can be re-invoked, not just run once on mount. Added a `checkError` state, set only when the row query itself errors; on that path, `initialRoute` is left untouched (never set to `'MainTabs'`) and a new render branch (checked before the existing `initialRoute === null` splash-spinner branch) shows a blocking screen — `Ionicons name="cloud-offline-outline"`, an explanatory line, and a **Retry** button that calls `resolveSession()` again. The `!row?.name` check's own fail-open behavior is explicitly left unchanged (commented in place, so a future reader doesn't "fix" it to match the new stricter behavior) — its risk profile is genuinely different, per the bug report's own framing.
+
+**Verified**: `npx tsc --noEmit` — **0 errors**. Code-level: confirmed by re-reading the final file that the only thing the `if (error)` branch does is `setCheckError(true); return;` — no code path anywhere sets `initialRoute` to `'MainTabs'` when that branch fires, so the fix is structural, not just behavioral-by-luck. Since there's no simulator/emulator available in this environment, "simulate a query error" was verified at the REST level instead: confirmed both realistic failure modes actually produce an error response, not silently-empty data — (1) a `.single()`-style query against a nonexistent row (the trigger-lag/row-not-found case) returns `PGRST116`/`406`; (2) a broken column reference (an RLS-misconfig/schema-mismatch stand-in) returns `42703`/`400`. Both are the exact shape supabase-js surfaces as `{ data: null, error }`, confirming the new `checkError` branch would fire for both real-world causes named in the bug report.
+
+### Next steps (suggested)
+- On-device verification that the retry screen actually renders and that tapping Retry re-resolves correctly once the underlying condition clears (e.g. network back, or the trigger-lag race having resolved) — not exercisable without a simulator/device in this environment.
+- The `!row?.name` fail-open gap is unchanged by design (see above) — not a follow-up item, a deliberate scope boundary.
+
+---
+
+## Session 29 — Remove the dead header profile avatars (Dashboard/Match/Chats)
+
+### What was done
+
+Removed the small profile-avatar circle shown top-right of the header on three tab screens (`DashboardScreen.tsx`, `DiscoveryScreen.tsx`, `ConversationsListScreen.tsx`) — flagged as non-functional rather than a working shortcut: Dashboard's and Discovery's were `TouchableOpacity`s with no `onPress` at all (dead taps), Discovery's was additionally hardcoded to `"A"` instead of the real user's initial, and Chats' wasn't even a button. The app already has a dedicated **Profile** tab in the bottom nav, so these weren't filling a missing-navigation gap either.
+
+- `DashboardScreen.tsx` — removed the avatar `TouchableOpacity` + its now-dead local `avatarInitial` variable + `avatarCircle`/`avatarInitial` styles.
+- `DiscoveryScreen.tsx` — removed the avatar `TouchableOpacity` from `headerRight` (the functional Filter button next to it is untouched) + its `avatarCircle`/`avatarInitial` styles.
+- `ConversationsListScreen.tsx` — removed the avatar `View` + its `myInitial` state + the `avatarCircleHeader`/`avatarInitialHeader` styles. Also removed the now-dead `users` SELECT (`ownRow`/`setMyInitial`) that existed solely to feed this display — an extra unnecessary network call on every conversations-list load, not just a UI change. The per-row partner-avatar styles (`avatarCircle`/`avatarInitial`, no `Header` suffix) are a separate, still-used set — left alone.
+
+**Verified**: `npx tsc --noEmit` — **0 errors**. `npm run lint` — no new warnings/errors introduced by these three files (pre-existing warnings elsewhere in the repo are unrelated, unchanged).
+
+---
+
+## Session 30 — Phase 7 frontend half: Discovery filters, ranking, score badge, birthdate/city inputs
+
+### What was done
+
+Implemented the frontend half of `implemention.md` Phase 7, against Session 26's already-verified `discoverable_users` extension (`age`/`same_city`/`match_score`, Migration 23) — the backend schema was not touched this session.
+
+- `src/types/index.ts` — `DiscoveryFilters.distance: number` → `sameCityOnly: boolean` (its only two consumers, `FilterScreen.tsx`/`DiscoveryScreen.tsx`, both updated). New `DiscoveryCandidate` interface (`User` + `age?`/`sameCity?`/`matchScore`) — kept separate from `User` on purpose, since these fields only mean something relative to the querying viewer. Also added `User.birthdate?: string` so `EditProfileScreen.tsx` can read/write it through the existing sanctioned mapper rather than a raw row field (this project's data-layer convention) — not exposed on `discoverable_users` itself, matching the view's own privacy-by-default precedent.
+- `src/data/mappers.ts` — new `mapDiscoveryCandidateFromAPI(row)`; `mapUserFromAPI` gained `birthdate` (additive, existing callers unaffected).
+- `src/screens/DiscoveryScreen.tsx` — `loadDiscovery()` now actually consumes `activeFilters` (previously ignored despite already being in state from `route.params.filters`): chains `.eq('university', ...)` (preferring `selectedUni`'s exact pill choice over `institution`'s free-typed text, either can supply it), `.in('department', ...)`, `.gte('age', ...)`/`.lte('age', ...)` (only when inside the RangeSlider's own 18/50 bounds — a value still at either extreme means the filter was never actually touched), `.eq('same_city', true)` when `sameCityOnly`, then `.order('match_score', { ascending: false })`. Added `activeFilters` to `loadDiscovery`'s `useCallback` deps so applying new filters actually retriggers a reload. `candidates` state and `CardFace`'s prop type moved from `User` to `DiscoveryCandidate`; `CardFace` gained a `"{score}% Match"` badge (top-left, mirroring the existing top-right verified badge, existing theme tokens only) — bringing back the compatibility badge Session 11 deliberately removed for having no real algorithm behind it, now backed by one.
+- `src/screens/FilterScreen.tsx` — removed the mock, unwired `Slider` component/distance state entirely; added a `sameCityOnly` `Switch` toggle in its place. **Also fixed `DEFAULT_FILTERS`**, which is a real, non-obvious gap this task's own "each filter only applied when actually set" requirement exposed: the old defaults (`departments: ['Computer Science', 'Engineering']`, `minAge: 21, maxAge: 28`) meant an untouched "Apply Filters" tap would silently restrict the deck the moment `loadDiscovery` started actually reading them — not a mock-UI-only default anymore once wired for real. Changed to `departments: []` and the RangeSlider's own full bounds (`18`/`50`), so an untouched Apply is a true no-op.
+- `src/screens/EditProfileScreen.tsx` — added a `City` `FormInput` and a day/month/year numeric-input row for birthdate (no native date-picker dependency, per implemention.md's decision). `composeBirthdate()` validates via a real `Date` round-trip (catches e.g. Feb 30, not just range checks) and rejects future dates; a fully-blank birthdate is a no-op (omitted from the UPDATE payload, existing value untouched), a partially-filled one aborts the whole save with an error (fails closed rather than silently dropping just that field) — both decided rather than guessed, matching this project's established validation posture elsewhere.
+
+#### Verified
+- **REST-level script** (throwaway, deleted after use, local stack — this project's established pattern), 17 checks, 8 synthetic accounts, mirroring `DiscoveryScreen.tsx`'s exact query-building shape: a maximal-overlap candidate scores exactly **100** (raw 115, clamp confirmed); zero-overlap scores **0**; a same-university-only candidate with NULL `birthdate`/`city` scores **15** and still appears (not excluded) with `age: null`, `same_city: false` (not `null`/`true`) — confirming Phase 7's NULL-safety requirement; ranking order matches expected scores. Each filter individually confirmed: `.eq('university', ...)` and `.in('department', ...)` return exactly the matching subset; `.gte('age', 24).lte('age', 28)` includes both boundary ages (24, 28) and excludes just-outside ages (23, 29), and correctly excludes a NULL-age candidate from an *active* filter (expected 3-valued-logic SQL behavior, not a bug — NULL-safety applies to score contribution, not to an explicitly-requested filter); `.eq('same_city', true)` returns only the same-city candidate. Viewer-relativity re-confirmed independently of Session 26's own test: the same candidate scores 100 as seen by the maximal-overlap viewer and 0 as seen by a zero-overlap one.
+  - One test-script-only wrinkle, not a product bug: the two initial boundary-age failures traced to the verification script computing "today" from the local machine's timezone (TRT, UTC+3) while the Postgres container's `current_date` runs in UTC — at certain times of day local "today" is already tomorrow in UTC, shifting a same-day birthdate by exactly one day. Fixed by computing test birthdates from UTC date components instead; re-ran clean (17/17).
+  - All 8 synthetic accounts deleted afterward, confirmed via a follow-up `count(*)` returning `0`.
+- `npx tsc --noEmit` — **0 errors**. `npm run lint` — no new warnings (the pre-existing `DiscoveryScreen.tsx` exhaustive-deps warning and others are unchanged, unrelated to this session's edits).
+- **Not verified on a running React Native app** — no simulator/emulator available in this environment, the same standing limitation as every session since 12.
+
+#### Incidentally fixed while touching this file: duplicate session numbers in this log
+Found `## Session 25` and `## Session 26` each appearing twice (concurrent backend work landed its own Session 25/26 entries in this file around the same time as two of this conversation's own entries). Renumbered the later-appearing duplicates to 27/28/29 in file order, preserving all content untouched, and fixed one internal cross-reference (Session 28's own text pointing at "Session 25" meant the newly-27 entry, not the pre-existing one about the matched-partner/swiped-right leak). This session's own new content is Session 30, avoiding a repeat of the same collision.
+
+### Next steps (suggested)
+- On-device verification pass — same standing limitation as every session since 12.
+- `FilterScreen.tsx`'s Institution section still shows 3 hardcoded mock pills (`Harvard Univ.`, `MIT`, `Stanford`) unrelated to the actual Turkish-university dataset collected at registration (`RegisterProfileScreen.tsx`'s real searchable picker) — flagged, not fixed, since the task's explicit ask was to wire the *existing* fields through, not redesign the Institution picker; a `.eq('university', ...)` filter using one of these mock pills would never match a real user today.
+
+---
+
+## Session 31 — Route email_verified/verification_code through mappers.ts (code-review finding)
+
+### What was done
+
+Code-review finding: `AppNavigator.tsx`'s session-check and `RegisterEmailCodeScreen.tsx`'s own-row code read both accessed `row.email_verified`/`data.verification_code` directly off the Supabase response instead of through `src/data/mappers.ts` — a deviation from this project's stated convention that the mapper module is the only sanctioned crossing point between snake_case rows and the frontend (`CLAUDE.md`). Flagged as low-risk (identically-named single-field selects, no snake_case/camelCase mismatch possible) but not urgent; asked the user whether to fix now or defer until verification status needs to surface in more UI — **chose now**.
+
+- `src/types/index.ts` — new `EmailVerificationStatus` interface (`emailVerified: boolean`, `verificationCode: string`). Neither `User` (display profile data) nor `RegistrationData` (the signup form's shape) has a natural home for verification status, so this is a small dedicated type rather than folding onto either — same reasoning Phase 7's `DiscoveryCandidate` already established for not overloading `User`.
+- `src/data/mappers.ts` — new `mapEmailVerificationStatusFromAPI(row)`, sitting right after `mapUserFromAPI` since it's the same class of mapper (tolerates a partial `select()`, callers read only the field(s) they queried).
+- `AppNavigator.tsx` — `row?.email_verified` → `mapEmailVerificationStatusFromAPI(row).emailVerified`. The rest of that same `row` object still goes through `profileRowToRegistrationData` unchanged (already the sanctioned mapper for that shape — not part of this finding).
+- `RegisterEmailCodeScreen.tsx` — `data?.verification_code ?? null` → `mapEmailVerificationStatusFromAPI(data).verificationCode || null`, preserving the exact same empty→`null` display fallback (the mapper defaults to `''`, then `||` collapses it back to `null` for the "——————" placeholder state).
+
+**Verified**: `npx tsc --noEmit` — **0 errors**. `npm run lint` — same 8 pre-existing problems as before this session, nothing new.
+
+### Next steps (suggested)
+- None — this was a self-contained cleanup with no remaining follow-up.
